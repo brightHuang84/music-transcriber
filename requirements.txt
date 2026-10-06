@@ -1,0 +1,21 @@
+# Runtime dependencies for 听音识谱.
+# Install PyTorch first (see start.sh / start.bat). It is intentionally not
+# listed here, so a CPU-only computer does not download a CUDA build.
+#
+# basic-pitch is installed afterwards with --no-deps. Its declared TensorFlow
+# pin does not support Python 3.12; the app runs the bundled ONNX model instead.
+numpy>=1.26,<2
+scipy>=1.11,<1.15
+demucs==4.1.0
+librosa==0.10.2.post1
+pretty_midi==0.2.11
+resampy>=0.4.2,<0.4.3
+scikit-learn>=1.3,<1.6
+onnxruntime>=1.17,<1.31
+mir_eval>=0.7,<0.9
+fastapi==0.115.6
+uvicorn==0.32.1
+python-multipart>=0.0.12,<0.1
+soundfile>=0.12,<0.15
+six>=1.16
+importlib_resources>=6
