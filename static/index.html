@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>听音识谱</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="mark" aria-hidden="true">谱</span>
+      <div>
+        <p class="eyebrow">在自己的电脑上听歌、看音符</p>
+        <h1>听音识谱</h1>
+      </div>
+    </div>
+    <p class="lede">放入一首歌，它会把人声、鼓、贝斯和其他乐器分开，并告诉你每个音叫什么、节奏落在哪里。</p>
+  </header>
+
+  <main>
+    <section id="drop-view" class="panel">
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="选择歌曲文件">
+        <svg viewBox="0 0 80 64" class="drop-art" aria-hidden="true">
+          <rect x="4" y="18" width="18" height="28" rx="4" />
+          <rect x="31" y="8" width="18" height="48" rx="4" />
+          <rect x="58" y="24" width="18" height="22" rx="4" />
+        </svg>
+        <h2>把歌曲拖到这里</h2>
+        <p>也可以点击选择。支持 mp3、wav、m4a、flac。</p>
+        <p class="hint">第一次分析会下载模型，普通电脑处理一首歌大约要几分钟。</p>
+        <button type="button" class="primary" id="pick-file">选择歌曲</button>
+        <input id="file-input" type="file" accept=".mp3,.wav,.m4a,.flac,audio/mpeg,audio/wav,audio/mp4,audio/flac" hidden />
+      </div>
+      <div class="demo-row">
+        <button type="button" class="ghost" id="demo-button">没有歌曲？先分析一段 4 秒示例</button>
+        <p>示例是程序生成的小旋律，用来熟悉界面。它同样会走完整的分析。</p>
+      </div>
+    </section>
+
+    <section id="progress-view" class="panel" hidden>
+      <p class="kicker" id="progress-filename">正在分析</p>
+      <h2 id="progress-message">准备中…</h2>
+      <div class="bar" aria-hidden="true"><div id="bar-fill"></div></div>
+      <p class="percent" id="progress-percent">0%</p>
+      <ol class="steps" id="step-list">
+        <li data-step="read">读取音频</li>
+        <li data-step="separate">分离音轨</li>
+        <li data-step="rhythm">速度与节拍</li>
+        <li data-step="notes">识别音高</li>
+        <li data-step="drums">识别鼓点</li>
+        <li data-step="chords">估计和弦</li>
+        <li data-step="midi">生成 MIDI</li>
+      </ol>
+      <p class="hint">请不要关闭这个页面。关掉黑色的启动窗口会退出程序。</p>
+    </section>
+
+    <section id="error-view" class="panel error-panel" hidden>
+      <h2>这次没有分析成功</h2>
+      <p id="error-message"></p>
+      <button type="button" class="primary" id="error-back">换一首歌</button>
+    </section>
+
+    <section id="result-view" hidden>
+      <div class="result-head">
+        <div>
+          <p class="kicker" id="song-name"></p>
+          <h2>分析结果</h2>
+        </div>
+        <button type="button" class="ghost" id="again">分析另一首</button>
+      </div>
+
+      <div class="now panel">
+        <div>
+          <span class="kicker">现在的音</span>
+          <strong id="now-notes">—</strong>
+        </div>
+        <div>
+          <span class="kicker">和弦（估计）</span>
+          <strong id="now-chord">—</strong>
+        </div>
+        <div>
+          <span class="kicker">速度</span>
+          <strong id="bpm-readout">—</strong>
+        </div>
+        <div>
+          <span class="kicker">调性（估计）</span>
+          <strong id="key-readout">—</strong>
+        </div>
+        <div class="beat-wrap" title="圆点会跟着拍子亮">
+          <span class="beat-dot" id="beat-dot"></span>
+          <span>拍</span>
+        </div>
+      </div>
+
+      <div class="transport panel">
+        <button type="button" class="play" id="play" aria-label="播放">播放</button>
+        <div class="time">
+          <span id="time-now">0:00</span>
+          <span id="time-total">0:00</span>
+        </div>
+        <input id="scrub" type="range" min="0" max="1000" value="0" aria-label="播放进度" />
+        <div class="listen" role="group" aria-label="听哪一条">
+          <button type="button" data-listen="mix" class="on">原曲</button>
+          <button type="button" data-listen="solo">只听当前乐器</button>
+          <button type="button" data-listen="all">四轨一起</button>
+        </div>
+      </div>
+
+      <div class="stem-tabs" role="tablist" aria-label="乐器">
+        <button type="button" role="tab" data-stem="vocals" class="on">人声</button>
+        <button type="button" role="tab" data-stem="drums">鼓</button>
+        <button type="button" role="tab" data-stem="bass">贝斯</button>
+        <button type="button" role="tab" data-stem="other">其他乐器</button>
+      </div>
+      <p class="stem-note" id="stem-note"></p>
+
+      <div class="stage panel">
+        <div class="roll-wrap">
+          <div class="gutter" id="gutter"></div>
+          <div class="roll-scroll" id="roll-scroll">
+            <div class="roll-inner" id="roll-inner">
+              <div class="chord-lane" id="chord-lane"></div>
+              <canvas id="viz"></canvas>
+              <div class="playhead" id="playhead"></div>
+            </div>
+          </div>
+        </div>
+        <p class="hint" id="viz-hint"></p>
+      </div>
+
+      <div class="split">
+        <section class="panel">
+          <h3 id="list-title">音符</h3>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>音名</th>
+                  <th>唱名</th>
+                  <th>开始</th>
+                  <th>时长</th>
+                  <th>力度</th>
+                </tr>
+              </thead>
+              <tbody id="note-body"></tbody>
+            </table>
+          </div>
+          <p class="hint" id="list-hint"></p>
+        </section>
+        <section class="panel downloads">
+          <h3>保存下来</h3>
+          <p>MIDI 可以用 MuseScore 等软件打开，继续看五线谱。音轨是 wav，可以单独再听。</p>
+          <div class="download-grid" id="download-grid"></div>
+          <a class="primary linkish" id="bundle-link" href="#">打包下载全部音轨和 MIDI</a>
+        </section>
+      </div>
+
+      <section class="panel primer">
+        <h3>怎么读这些结果</h3>
+        <ul>
+          <li><b>C4</b> 是钢琴正中的那个 C，也叫中央 C。数字越大，音越高。C5 比 C4 高一个八度。</li>
+          <li>唱名 <b>do re mi fa sol la si</b> 对应 C D E F G A B。带 # 的是升号，比如 #fa 就是 F#。</li>
+          <li>鼓面上，<b>底鼓</b>常在强拍，<b>军鼓</b>常在第 2、第 4 拍，<b>踩镲</b>打得更密。</li>
+          <li>竖线是拍子，更重的线是小节的第一拍。圆点会跟着拍子亮一下。</li>
+          <li>和弦和调性是估计的，只标大和弦、小和弦，复杂的歌会不准。识谱也会有错音，把它当成学习的起点就好。</li>
+        </ul>
+      </section>
+    </section>
+  </main>
+
+  <footer>
+    <p>歌曲只在这台电脑上处理，不会上传到网上。</p>
+  </footer>
+  <script src="/app.js"></script>
+</body>
+</html>
