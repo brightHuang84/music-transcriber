@@ -45,6 +45,7 @@ def test_install_script_does_not_require_pip_inside_the_venv():
     assert "uv pip install --python" in commands
     assert "-m pip" not in commands
     assert "UV_PYTHON_PREFERENCE=only-managed" in commands
+    assert "adtof-pytorch" in commands
 
 
 def test_webengine_flags_are_set_before_pyside_imports():

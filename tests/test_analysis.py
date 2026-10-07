@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.audio_io import convert_to_wav, load_audio, save_wav
 from app.chords import detect_chords
-from app.drums import detect_drums
+from app.drums import DRUM_MIDI, detect_drums_by_spectrum, split_family
 from app.midi_export import write_combined_midi, write_stem_midi
 from app.notes import midi_to_name, midi_to_solfege
 from app.rhythm import analyze_rhythm
@@ -29,10 +29,10 @@ def test_note_names():
 
 def test_drum_hits_match_the_pattern():
     example = synthesize_example()
-    hits = detect_drums(example["drum_audio"], example["sample_rate"])
+    hits = detect_drums_by_spectrum(example["drum_audio"], example["sample_rate"])
     assert hits, "expected at least one drum hit"
     for hit in hits:
-        assert hit["kind"] in {"kick", "snare", "hihat", "other"}
+        assert hit["kind"] in {"kick", "snare", "hat_closed"}
         assert 1 <= hit["velocity"] <= 127
         assert hit["time"] >= 0
     for expected in example["drums"]:
@@ -42,6 +42,49 @@ def test_drum_hits_match_the_pattern():
             if hit["kind"] == expected["kind"] and abs(hit["time"] - expected["time"]) <= 0.08
         ]
         assert matched, f"missing {expected} in {hits}"
+
+
+def _tone_burst(frequency: float, seconds: float, sample_rate: int = 44100) -> np.ndarray:
+    count = int(seconds * sample_rate)
+    time = np.arange(count, dtype=np.float32) / sample_rate
+    wave = np.sin(2 * np.pi * frequency * time).astype(np.float32)
+    wave *= np.exp(-time / 0.12)
+    return wave
+
+
+def test_open_hat_rings_longer_than_a_closed_hat():
+    sample_rate = 44100
+    closed = np.zeros(int(0.4 * sample_rate), dtype=np.float32)
+    noise = np.random.default_rng(1).standard_normal(int(0.03 * sample_rate)).astype(np.float32)
+    closed[: noise.size] = noise
+    opened = np.random.default_rng(2).standard_normal(int(0.4 * sample_rate)).astype(np.float32)
+    opened *= np.exp(-np.arange(opened.size, dtype=np.float32) / sample_rate / 0.18)
+    assert split_family("hat", closed, sample_rate) == "hat_closed"
+    assert split_family("hat", opened, sample_rate) == "hat_open"
+
+
+def test_cymbal_and_tom_splits():
+    sample_rate = 44100
+    ride = _tone_burst(480, 0.16, sample_rate)
+    crash = np.random.default_rng(3).standard_normal(int(0.5 * sample_rate)).astype(np.float32)
+    crash *= np.exp(-np.arange(crash.size, dtype=np.float32) / sample_rate / 0.28)
+    assert split_family("cymbal", ride, sample_rate) == "ride"
+    assert split_family("cymbal", crash, sample_rate) == "crash"
+    assert split_family("tom", _tone_burst(180, 0.3, sample_rate), sample_rate) == "tom_high"
+    assert split_family("tom", _tone_burst(120, 0.3, sample_rate), sample_rate) == "tom_mid"
+    assert split_family("tom", _tone_burst(80, 0.35, sample_rate), sample_rate) == "tom_floor"
+
+
+def test_drum_midi_notes_follow_general_midi():
+    assert DRUM_MIDI["kick"] == 36
+    assert DRUM_MIDI["snare"] == 38
+    assert DRUM_MIDI["hat_closed"] == 42
+    assert DRUM_MIDI["hat_open"] == 46
+    assert DRUM_MIDI["ride"] == 51
+    assert DRUM_MIDI["crash"] == 49
+    assert DRUM_MIDI["tom_high"] == 50
+    assert DRUM_MIDI["tom_mid"] == 47
+    assert DRUM_MIDI["tom_floor"] == 43
 
 
 def test_tempo_is_near_120_and_downbeats_land_on_kicks():
@@ -90,7 +133,11 @@ def test_midi_files_round_trip(tmp_path: Path):
     bass = [
         {"pitch": 36, "start": 0.0, "end": 0.4, "velocity": 70, "name": "C2", "solfege": "do", "duration": 0.4}
     ]
-    hits = [{"time": 0.5, "kind": "snare", "velocity": 100}]
+    hits = [
+        {"time": 0.5, "kind": "snare", "velocity": 100},
+        {"time": 1.0, "kind": "hat_open", "velocity": 90},
+        {"time": 1.5, "kind": "crash", "velocity": 110},
+    ]
     write_stem_midi(tmp_path / "vocals.mid", "vocals", 120, notes=notes)
     write_stem_midi(tmp_path / "drums.mid", "drums", 120, hits=hits)
     write_combined_midi(tmp_path / "all.mid", 120, {"vocals": notes, "bass": bass, "other": []}, hits)
@@ -98,7 +145,7 @@ def test_midi_files_round_trip(tmp_path: Path):
     assert vocals.instruments[0].notes[0].pitch == 64
     drums = pretty_midi.PrettyMIDI(str(tmp_path / "drums.mid"))
     assert drums.instruments[0].is_drum
-    assert drums.instruments[0].notes[0].pitch == 38
+    assert [note.pitch for note in drums.instruments[0].notes] == [38, 46, 49]
     combined = pretty_midi.PrettyMIDI(str(tmp_path / "all.mid"))
     names = {instrument.name for instrument in combined.instruments}
     assert {"Vocals", "Bass", "Drums"} <= names

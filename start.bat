@@ -46,6 +46,8 @@ python -m pip install -r requirements.txt
 if errorlevel 1 goto :failed
 python -m pip install basic-pitch==0.4.0 --no-deps
 if errorlevel 1 goto :failed
+python -m pip install --no-deps adtof-pytorch @ git+https://github.com/xavriley/ADTOF-pytorch.git@85c192e78f716ea0b111cc8a5ee4a8f6a3a4f8a9
+if errorlevel 1 goto :failed
 
 python -m app
 if errorlevel 1 goto :failed

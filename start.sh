@@ -59,5 +59,6 @@ fi
 
 python -m pip install -r requirements.txt
 python -m pip install "basic-pitch==0.4.0" --no-deps
+python -m pip install --no-deps "adtof-pytorch @ git+https://github.com/xavriley/ADTOF-pytorch.git@85c192e78f716ea0b111cc8a5ee4a8f6a3a4f8a9"
 
 exec python -m app
