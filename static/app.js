@@ -727,14 +727,14 @@ document.querySelectorAll(".listen button").forEach((button) => {
 document.querySelector("#again").addEventListener("click", resetToDrop);
 document.querySelector("#error-back").addEventListener("click", resetToDrop);
 window.addEventListener("keydown", (event) => {
-  if (!result || event.code !== "Space" || event.repeat) return;
+  const isSpace = event.code === "Space" || event.key === " ";
+  if (!result || !isSpace || event.repeat) return;
   const tag = event.target && event.target.tagName;
   if (tag === "TEXTAREA" || tag === "SELECT") return;
   if (tag === "INPUT" && event.target.id !== "scrub") return;
-  if (event.target && event.target.id === "play") return;
   event.preventDefault();
   togglePlay();
-});
+}, true);
 window.addEventListener("resize", () => {
   if (!result) return;
   renderChords();
