@@ -1,55 +1,69 @@
 # 听音识谱
 
-把一首歌放进去，程序会在**你自己的电脑**上：
+把一首歌放进窗口，程序会在**你自己的电脑**上：
 
 1. 把歌分成四条音轨：人声、鼓、贝斯、其他乐器，并且可以单独听。
-2. 给人声、贝斯、其他乐器识别出音符（音高、什么时候开始、持续多久、力度），画成钢琴卷帘，并标出 C4、E4 这样的音名。
+2. 给人声、贝斯、其他乐器识别出音符（音高、什么时候开始、持续多久、力度），画成钢琴卷帘，并标出 C4、E4 这样的音名和唱名。
 3. 给鼓识别底鼓、军鼓、踩镲，画成对齐拍子的格子。
 4. 估计整首歌的速度（BPM）、拍子和小节第一拍。能判断的话，也会标出简单的大和弦 / 小和弦。
 5. 导出每一轨的 MIDI、合并后的 MIDI，以及分开的音频。
 
-歌曲不会上传到网上。
+歌曲不会上传到网上。窗口里会显示分析进度；分析在后台进行，窗口可以继续操作。
 
-## 你需要先安装两样东西
+## Ubuntu（推荐）
 
-1. **Python 3.12**（3.10 或 3.11 也可以，不要用 3.13）
-   - Windows：打开 [python.org/downloads](https://www.python.org/downloads/)，安装时勾选 **Add python.exe to PATH**。
-   - macOS：同样可以从 python.org 下载，或者在终端运行 `brew install python@3.12`。
-2. **ffmpeg**（用来读取 mp3、m4a、flac）
-   - Windows：打开 PowerShell，运行 `winget install Gyan.FFmpeg`。装完后**关掉并重新打开**终端。
-   - macOS：终端运行 `brew install ffmpeg`。
-   - 如果没有 winget / brew，到 [ffmpeg.org/download.html](https://ffmpeg.org/download.html) 下载，并保证终端里输入 `ffmpeg` 有反应。
+适用 Ubuntu 24.04、26.04 这类桌面系统（GNOME）。不需要自己安装或挑选 Python。安装脚本会用 [uv](https://docs.astral.sh/uv/) 下载 Python 3.12，系统自带的更新版本不会被拿来跑这个程序。
 
-## 怎么打开
-
-**Windows：** 双击 `start.bat`。
-
-**macOS：** 在终端进入这个文件夹，运行：
+在这个文件夹里打开终端，只运行一次：
 
 ```bash
-chmod +x start.sh
-./start.sh
+chmod +x install.sh uninstall.sh
+./install.sh
 ```
 
-第一次运行会创建虚拟环境并下载依赖，可能要十几分钟，取决于网速。以后再打开就会快很多。
+脚本会请你输入开机密码，用来安装 ffmpeg、中文字体和窗口所需的系统库。装完后：
 
-看到「听音识谱已启动」后，浏览器会打开一个页面。如果没有自动打开，窗口里有一个地址，一般是 `http://127.0.0.1:8765`，把它复制到浏览器即可。
+1. 按 Super 键（许多键盘上标着 Windows 标志）。
+2. 搜索「听音识谱」。
+3. 点击图标。程序会以自己的窗口打开，不会打开浏览器，也不会留下终端窗口。
 
-**不要关掉那个黑色窗口。** 关掉它，程序就退出了。
+想卸掉菜单图标和虚拟环境时，运行：
+
+```bash
+./uninstall.sh
+```
+
+项目文件夹还在。不再需要这个软件时，把整个文件夹删掉即可。
+
+有 NVIDIA 显卡，并且安装时能运行 `nvidia-smi`，会安装 CUDA 版 PyTorch，分离音轨时优先用显卡。没有显卡，或显卡版没有装上，就用 CPU，结果一样，只是更慢。窗口本身用软件绘制，这和分离音轨用不用显卡是两回事。
+
+打不开时，把这个文件发给懂电脑的朋友：`~/.local/share/tingyin-shipu/app.log`。
+
+## Windows 和 macOS
+
+这两边仍然可以用浏览器打开，不是 Ubuntu 上的独立窗口。
+
+**Windows：** 安装 [Python 3.12](https://www.python.org/downloads/)（勾选 Add python.exe to PATH）和 ffmpeg（PowerShell 里运行 `winget install Gyan.FFmpeg`），然后双击 `start.bat`。不要关掉那个黑色窗口。
+
+**macOS：** 安装 Python 3.12 和 ffmpeg（`brew install python@3.12 ffmpeg`），然后运行 `./start.sh`。不要关掉那个终端窗口。
+
+不要用 Python 3.13 或更新的版本。Ubuntu 用户不要运行 `start.sh`，那个脚本会提示你改用 `install.sh`。
 
 ## 怎么用
 
-1. 把 mp3、wav、m4a 或 flac 拖进页面，或点击「选择歌曲」。
-2. 等待进度走完。分离音轨最慢。一首 3 分钟左右的歌，在没有独立显卡的电脑上常常要几分钟到十几分钟。
+1. 把 mp3、wav、m4a 或 flac 拖进窗口，或点击「选择歌曲」。
+2. 等待进度走完。分离音轨最慢。一首 3 分钟左右的歌，在没有独立显卡的电脑上常常要几分钟到十几分钟。进度条和步骤会留在窗口里。
 3. 完成后：
    - 点「人声 / 鼓 / 贝斯 / 其他乐器」切换你正在看的乐器。
    - 「原曲」边听整首歌边看当前乐器；「只听当前乐器」只放这一轨；「四轨一起」把分开的音轨叠回去。
    - 空格键可以播放 / 暂停。
-   - 钢琴卷帘上的字就是音名。左边 C4 的 4 表示八度，数字越大音越高。
+   - 钢琴卷帘上的字就是音名。左边 C4 的 4 表示八度，数字越大音越高。旁边也会标唱名。
    - 鼓的格子按十六分音符对齐。竖线是拍，颜色更深的是小节第一拍。
-4. 右侧可以下载当前音轨、当前 MIDI、全部 MIDI，或打包下载。
+4. 右侧可以下载当前音轨、当前 MIDI、全部 MIDI，或打包下载。保存时会弹出「保存文件」窗口。
 
 没有现成歌曲时，可以点「先分析一段 4 秒示例」。那是程序生成的小旋律，用来熟悉界面，同样会走完整分析。
+
+分析过程中不要关掉听音识谱窗口。关掉窗口，这次分析就停了。
 
 ## 结果可以怎么理解
 
@@ -62,23 +76,24 @@ MIDI 可以用 [MuseScore](https://musescore.org/)（免费）打开，看更接
 
 ## 它在背后做了什么
 
+窗口是 Qt 6 画出来的。里面用 Qt WebEngine（同一套 Chromium 引擎）显示原来的界面，所以钢琴卷帘、鼓点和播放都还在，但地址栏和浏览器标签都没有。分析服务只监听本机 `127.0.0.1`，随窗口一起启动，随窗口一起退出。
+
 - 音轨分离：[Demucs](https://github.com/facebookresearch/demucs) 的 **htdemucs** 模型（人声、鼓、贝斯、其他）。
 - 音符识别：[Spotify Basic Pitch](https://github.com/spotify/basic-pitch)（ONNX，不需要安装 TensorFlow）。
 - 速度、拍子、和弦：librosa，加上按频谱区分底鼓 / 军鼓 / 踩镲。
-- 有 NVIDIA 显卡（并且 start 脚本能看到 `nvidia-smi`）或苹果芯片时，会尽量用显卡；否则用 CPU。CPU 一定可以跑。
 
 第一次分离歌曲时，还会下载大约 80MB 的 Demucs 模型。
 
 ## 常见问题
 
-**窗口一闪就关了，或提示找不到 Python。**  
-重新安装 Python 3.12，并勾选加入 PATH。然后重新双击 `start.bat`。
+**应用程序菜单里找不到图标。**  
+再运行一次 `./install.sh`。然后注销一次，或按 Super 再搜索「听音识谱」。
 
 **提示找不到 ffmpeg。**  
-按上面的方法安装，然后关掉旧窗口，重新运行 start 脚本。
+再运行 `./install.sh`。它会用系统包管理器安装 ffmpeg。
 
 **一直停在「分离音轨」。**  
-这是正常的，CPU 上这一步很慢。请让窗口开着。如果超过半小时仍是 0%，看黑色窗口里有没有红色报错。第一次失败常常是因为没联网，模型没下载下来。
+这是正常的，CPU 上这一步很慢。请让窗口开着。第一次失败常常是因为没联网，模型没下载下来。看 `~/.local/share/tingyin-shipu/app.log`。
 
 **提示内存不够。**  
 关掉其他占内存的软件，或把歌曲剪到 1–3 分钟再试。
@@ -89,28 +104,32 @@ MIDI 可以用 [MuseScore](https://musescore.org/)（免费）打开，看更接
 **鼓点或和弦和我听到的不一样。**  
 鼓的分类靠频谱，爵士鼓、电子鼓和很密的踩镲容易标错。和弦遇到七和弦、转位、很多乐器一起响时也会偏。旋律相对更可信，但仍然不是人工记谱。
 
-**页面打不开。**  
-确认黑色窗口还在。手动打开窗口里打印的地址。地址以 `127.0.0.1` 开头，表示只给你自己用。
+**窗口里出现错误提示。**  
+提示是写给人看的。按提示换文件、重开窗口，或把日志文件发给懂电脑的朋友。
 
 ## 给想改代码的人
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-dev.txt
-pip install "basic-pitch==0.4.0" --no-deps
-# 先按 start.sh 里的方式装好 torch / torchaudio
-pytest tests/test_analysis.py
-pytest tests/test_smoke.py
+uv python install 3.12
+uv venv --python 3.12 .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m pip install "basic-pitch==0.4.0" --no-deps
+.venv/bin/python -m pip install -r requirements-desktop.txt
+# 按 install.sh 里的方式装好 torch / torchaudio（有 nvidia-smi 用 CUDA，否则用 CPU 轮子）
+.venv/bin/python -m pytest tests
+.venv/bin/python -m app.desktop
 ```
 
 `tests/test_smoke.py` 会用一段 4 秒合成音乐跑通分离、识谱、鼓点、MIDI。第一次会下载模型。
 
 ## 已知限制
 
+- 在 Ubuntu 24.04（X11）上打开过窗口。Ubuntu 26.04 的 GNOME / Wayland 用的是同一套 Qt 窗口，但那套桌面没有在这里逐项点过。
+- 窗口绘制关掉了 Chromium 的 GPU 合成，避免有些机器上窗口一片空白。分离音轨仍然会在有 NVIDIA 显卡时使用 CUDA。
+- 没有提供 AppImage 或 deb 安装包。安装方式是 `./install.sh`。
 - 默认假设 4/4 拍。三拍子的歌，小节线可能对不齐。
 - 不识别歌词，也不生成五线谱图片（MIDI 可以交给 MuseScore）。
 - 一首歌最长接受约 10 分钟，文件最大约 120MB。
 - 鼓点分类不是专门的鼓转录模型，复杂鼓组只会标成底鼓、军鼓、踩镲或其他。
 - 和弦只估计大三和弦和小三和弦。
-- Python 3.13 及以上还不能用这一套依赖。
+- 分析依赖锁在 Python 3.12。安装脚本会自己下载这个版本。

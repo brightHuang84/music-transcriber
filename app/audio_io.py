@@ -53,7 +53,9 @@ def convert_to_wav(source: Path, destination: Path, sample_rate: int = TARGET_SA
     try:
         completed = subprocess.run(command, capture_output=True, text=True, check=False)
     except OSError as exc:
-        raise UserFacingError("无法启动 ffmpeg。请确认它已安装，并且可以在终端里运行 ffmpeg。") from exc
+        raise UserFacingError(
+            "无法启动 ffmpeg，所以读不了这首歌。在 Ubuntu 上请重新运行 install.sh；在 Windows 或 macOS 上请先安装 ffmpeg，再打开程序。"
+        ) from exc
     if completed.returncode != 0 or not destination.exists():
         raise UserFacingError(
             "这个文件读不出来。请确认它是完整的 mp3、wav、m4a 或 flac 歌曲，而不是视频或损坏的文件。"

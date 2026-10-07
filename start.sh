@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
-# 双击或在终端运行：自动准备环境并打开浏览器。
+# macOS 备用入口：准备环境并打开浏览器。
+# Ubuntu 请用 ./install.sh，然后从应用程序菜单打开，不要运行这个脚本。
 set -euo pipefail
 cd "$(dirname "$0")"
+
+if [ "$(uname -s)" = "Linux" ]; then
+  echo "在 Ubuntu 上请运行 ./install.sh。"
+  echo "装好之后，按 Super 键，搜索「听音识谱」，从应用程序菜单打开。"
+  echo "这个脚本会打开浏览器，只留给 macOS 使用。"
+  exit 1
+fi
 
 echo "听音识谱：正在准备环境，第一次会比较久…"
 

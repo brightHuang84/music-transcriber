@@ -1,0 +1,3 @@
+# Ubuntu desktop window. Not imported by the analysis tests.
+# Qt WebEngine (Chromium) draws the existing page in its own window.
+PySide6==6.8.2
