@@ -122,7 +122,7 @@ def analyze(source: Path, work_dir: Path, progress) -> dict:
             continue
         notes[stem] = transcribe(stem_dir / f"{stem}.wav", stem, midi_tempo=bpm)
 
-    _report(progress, 86, "drums", "正在识别鼓点（底鼓、军鼓、踩镲）…")
+    _report(progress, 86, "drums", "正在分辨底鼓、军鼓、踩镲、叮叮镲、吊镲和通鼓…")
     hits = detect_drums(stem_audio["drums"], model_rate) if rms(stem_audio["drums"]) >= 1e-4 else []
 
     _report(progress, 92, "chords", "正在估计和弦…")

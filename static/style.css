@@ -187,6 +187,14 @@ main { display: grid; gap: 16px; padding-bottom: 28px; }
   justify-content: space-between;
 }
 
+.transport {
+  position: sticky;
+  top: 8px;
+  z-index: 4;
+}
+
+.transport-buttons { display: flex; gap: 8px; align-items: center; flex: none; }
+
 .now {
   display: grid;
   grid-template-columns: 1.4fr 1fr 0.7fr 0.8fr auto;
@@ -217,11 +225,19 @@ main { display: grid; gap: 16px; padding-bottom: 28px; }
 }
 
 .play {
-  width: 76px;
+  min-width: 76px;
   height: 44px;
   border: none;
   background: var(--ink);
   color: #f6efe4;
+}
+
+#stop, #follow { height: 44px; padding: 0 14px; }
+
+#follow.on {
+  background: var(--ink);
+  color: #f6efe4;
+  border-color: var(--ink);
 }
 
 .time { display: flex; gap: 8px; font-variant-numeric: tabular-nums; color: var(--muted); min-width: 92px; }
@@ -251,7 +267,7 @@ main { display: grid; gap: 16px; padding-bottom: 28px; }
 
 .stage { padding: 12px; }
 
-.roll-wrap { display: grid; grid-template-columns: 72px 1fr; min-height: 280px; }
+.roll-wrap { display: grid; grid-template-columns: 84px 1fr; min-height: 280px; }
 
 .gutter {
   position: relative;

@@ -6,10 +6,15 @@ const STEMS = {
 };
 
 const DRUM_ROWS = [
-  { kind: "hihat", label: "踩镲", en: "Hi-hat" },
+  { kind: "crash", label: "吊镲", en: "Crash" },
+  { kind: "ride", label: "叮叮镲", en: "Ride" },
+  { kind: "hat_open", label: "开镲", en: "Open hat" },
+  { kind: "hat_closed", label: "闭镲", en: "Closed hat" },
+  { kind: "tom_high", label: "高通鼓", en: "High tom" },
+  { kind: "tom_mid", label: "中通鼓", en: "Mid tom" },
   { kind: "snare", label: "军鼓", en: "Snare" },
+  { kind: "tom_floor", label: "落地通鼓", en: "Floor tom" },
   { kind: "kick", label: "底鼓", en: "Kick" },
-  { kind: "other", label: "其他", en: "Other" },
 ];
 
 const STEP_ORDER = ["read", "separate", "rhythm", "notes", "drums", "chords", "midi", "done"];
@@ -34,8 +39,11 @@ let sources = [];
 let raf = 0;
 let pxPerSec = 80;
 let playGeneration = 0;
+let followPlayback = true;
+let programmaticScroll = 0;
 
-const DRUM_LABEL = { kick: "底鼓", snare: "军鼓", hihat: "踩镲", other: "其他鼓" };
+const DRUM_LABEL = Object.fromEntries(DRUM_ROWS.map((row) => [row.kind, row.label]));
+const DRUM_EN = Object.fromEntries(DRUM_ROWS.map((row) => [row.kind, row.en]));
 
 function show(name) {
   dropView.hidden = name !== "drop";
@@ -149,6 +157,36 @@ async function poll(id) {
   window.setTimeout(() => poll(id), 800);
 }
 
+function setScroll(element, property, value) {
+  programmaticScroll += 1;
+  element[property] = value;
+  window.setTimeout(() => {
+    programmaticScroll -= 1;
+  }, 0);
+}
+
+function syncTransport() {
+  const play = document.querySelector("#play");
+  play.textContent = playing ? "暂停" : "播放";
+  play.setAttribute("aria-label", playing ? "暂停" : "播放");
+  const follow = document.querySelector("#follow");
+  if (!follow) return;
+  follow.textContent = followPlayback ? "跟随" : "恢复跟随";
+  follow.classList.toggle("on", followPlayback);
+  follow.setAttribute("aria-pressed", followPlayback ? "true" : "false");
+}
+
+function pauseFollow() {
+  if (!followPlayback) return;
+  followPlayback = false;
+  syncTransport();
+}
+
+function userMovedScroll() {
+  if (programmaticScroll > 0 || !playing) return;
+  pauseFollow();
+}
+
 function stopPlayback() {
   playGeneration += 1;
   sources.forEach((source) => {
@@ -157,7 +195,15 @@ function stopPlayback() {
   sources = [];
   playing = false;
   cancelAnimationFrame(raf);
-  document.querySelector("#play").textContent = "播放";
+  syncTransport();
+}
+
+function stopToStart() {
+  pauseOffset = 0;
+  stopPlayback();
+  paint(0);
+  const scroller = document.querySelector("#roll-scroll");
+  if (scroller) setScroll(scroller, "scrollLeft", 0);
 }
 
 function currentTime() {
@@ -200,7 +246,7 @@ function startPlayback() {
   });
   startedAt = audioCtx.currentTime - pauseOffset;
   playing = true;
-  document.querySelector("#play").textContent = "暂停";
+  syncTransport();
   tick();
 }
 
@@ -252,10 +298,10 @@ function paint(time) {
   const playhead = document.querySelector("#playhead");
   playhead.style.left = `${time * pxPerSec}px`;
   const scroller = document.querySelector("#roll-scroll");
-  if (playing) {
+  if (playing && followPlayback) {
     const x = time * pxPerSec;
     if (x < scroller.scrollLeft + 40 || x > scroller.scrollLeft + scroller.clientWidth - 60) {
-      scroller.scrollLeft = Math.max(0, x - scroller.clientWidth * 0.3);
+      setScroll(scroller, "scrollLeft", Math.max(0, x - scroller.clientWidth * 0.3));
     }
   }
   const sounding = notesAt(time);
@@ -271,8 +317,18 @@ function paint(time) {
     const end = Number(row.dataset.end);
     const active = time >= start && time < end;
     row.classList.toggle("active", active);
-    if (active && playing) row.scrollIntoView({ block: "nearest" });
   });
+  if (playing && followPlayback) {
+    const activeRow = document.querySelector("#note-body tr.active");
+    const box = document.querySelector(".table-scroll");
+    if (activeRow && box) {
+      const top = activeRow.offsetTop;
+      const bottom = top + activeRow.offsetHeight;
+      if (top < box.scrollTop + 4 || bottom > box.scrollTop + box.clientHeight - 4) {
+        setScroll(box, "scrollTop", Math.max(0, top - box.clientHeight * 0.35));
+      }
+    }
+  }
   if (viewStem === "drums") drawDrums(time);
   else drawPiano(time);
 }
@@ -382,7 +438,7 @@ function drawPiano(time) {
 function drawDrums(time) {
   const canvas = document.querySelector("#viz");
   const width = layoutWidth();
-  const height = 280;
+  const height = Math.max(360, DRUM_ROWS.length * 40);
   const dpr = window.devicePixelRatio || 1;
   canvas.width = width * dpr;
   canvas.height = height * dpr;
@@ -471,13 +527,11 @@ function renderNoteTable() {
   if (viewStem === "drums") {
     title.textContent = "鼓点";
     const hits = result.stems.drums.hits || [];
-    const names = { kick: "底鼓", snare: "军鼓", hihat: "踩镲", other: "其他" };
-    const solfege = { kick: "Kick", snare: "Snare", hihat: "Hi-hat", other: "Other" };
     hits.slice(0, 400).forEach((hit) => {
       const row = document.createElement("tr");
       row.dataset.start = String(hit.time);
       row.dataset.end = String(hit.time + 0.1);
-      row.innerHTML = `<td>${names[hit.kind] || hit.kind}</td><td>${solfege[hit.kind] || ""}</td><td>${formatTime(hit.time)}</td><td>—</td><td>${hit.velocity}</td>`;
+      row.innerHTML = `<td>${DRUM_LABEL[hit.kind] || hit.kind}</td><td>${DRUM_EN[hit.kind] || ""}</td><td>${formatTime(hit.time)}</td><td>—</td><td>${hit.velocity}</td>`;
       body.appendChild(row);
     });
     hint.textContent = hits.length > 400 ? "只列出前 400 个鼓点，上面的格子是完整的。" : `一共 ${hits.length} 下。`;
@@ -522,8 +576,15 @@ function describeStem() {
     note.textContent = `${meta.label}这一轨几乎没有声音，这首歌里可能没有它，或者它被分到了别的轨。`;
   } else if (viewStem === "drums") {
     const hits = stem.hits || [];
-    const count = (kind) => hits.filter((hit) => hit.kind === kind).length;
-    note.textContent = `底鼓 ${count("kick")} 下，军鼓 ${count("snare")} 下，踩镲 ${count("hihat")} 下。格子按 16 分音符对齐到拍子上。`;
+    const parts = DRUM_ROWS
+      .map((row) => {
+        const count = hits.filter((hit) => hit.kind === row.kind).length;
+        return count ? `${row.label} ${count}` : "";
+      })
+      .filter(Boolean);
+    note.textContent = parts.length
+      ? `${parts.join("，")}。格子按 16 分音符对齐到拍子上。`
+      : "这一轨没有识别到鼓点。";
   } else {
     note.textContent = `${meta.label}（${meta.en}）识别到 ${(stem.notes || []).length} 个音。横轴是时间，竖轴是音高。`;
   }
@@ -589,6 +650,8 @@ function resetToDrop() {
   buffers = {};
   result = null;
   history.replaceState(null, "", "/");
+  followPlayback = true;
+  syncTransport();
   show("drop");
 }
 
@@ -617,6 +680,30 @@ dropzone.addEventListener("drop", (event) => {
 });
 document.querySelector("#demo-button").addEventListener("click", startDemo);
 document.querySelector("#play").addEventListener("click", togglePlay);
+document.querySelector("#stop").addEventListener("click", () => {
+  if (!result) return;
+  stopToStart();
+});
+document.querySelector("#follow").addEventListener("click", () => {
+  followPlayback = true;
+  syncTransport();
+  if (result) paint(currentTime());
+});
+["#roll-scroll", ".table-scroll"].forEach((selector) => {
+  const element = document.querySelector(selector);
+  element.addEventListener("scroll", userMovedScroll, { passive: true });
+  element.addEventListener("wheel", () => {
+    if (playing) pauseFollow();
+  }, { passive: true });
+  element.addEventListener("pointerdown", (event) => {
+    if (!playing) return;
+    const box = element.getBoundingClientRect();
+    const onVerticalBar = event.clientX >= box.right - 18;
+    const onHorizontalBar = event.clientY >= box.bottom - 18;
+    if (onVerticalBar || onHorizontalBar) pauseFollow();
+  });
+});
+window.addEventListener("scroll", userMovedScroll, { passive: true });
 document.querySelector("#scrub").addEventListener("input", () => {
   if (!result) return;
   seek((Number(document.querySelector("#scrub").value) / 1000) * result.duration);
@@ -640,11 +727,14 @@ document.querySelectorAll(".listen button").forEach((button) => {
 document.querySelector("#again").addEventListener("click", resetToDrop);
 document.querySelector("#error-back").addEventListener("click", resetToDrop);
 window.addEventListener("keydown", (event) => {
-  if (event.code === "Space" && result && event.target === document.body) {
-    event.preventDefault();
-    togglePlay();
-  }
-});
+  const isSpace = event.code === "Space" || event.key === " ";
+  if (!result || !isSpace || event.repeat) return;
+  const tag = event.target && event.target.tagName;
+  if (tag === "TEXTAREA" || tag === "SELECT") return;
+  if (tag === "INPUT" && event.target.id !== "scrub") return;
+  event.preventDefault();
+  togglePlay();
+}, true);
 window.addEventListener("resize", () => {
   if (!result) return;
   renderChords();

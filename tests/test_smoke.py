@@ -35,7 +35,17 @@ def test_pipeline_on_synthesized_clip(tmp_path: Path):
         assert "peaks" in stem
         if name == "drums":
             for hit in stem["hits"]:
-                assert hit["kind"] in {"kick", "snare", "hihat", "other"}
+                assert hit["kind"] in {
+                    "kick",
+                    "snare",
+                    "hat_closed",
+                    "hat_open",
+                    "ride",
+                    "crash",
+                    "tom_high",
+                    "tom_mid",
+                    "tom_floor",
+                }
                 assert "time" in hit and "velocity" in hit
         else:
             for note in stem["notes"]:

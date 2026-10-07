@@ -6,7 +6,9 @@ from pathlib import Path
 
 import pretty_midi
 
-DRUM_PITCH = {"kick": 36, "snare": 38, "hihat": 42, "other": 47}
+from app.drums import DRUM_MIDI
+
+DRUM_PITCH = dict(DRUM_MIDI)
 
 # General MIDI programs. Piano and bass are easy to recognize when a beginner
 # opens the file in MuseScore or a DAW. Track names stay ASCII so strict MIDI
@@ -48,7 +50,7 @@ def _pitched_instrument(stem: str, notes: list[dict]) -> pretty_midi.Instrument:
 def _drum_instrument(hits: list[dict]) -> pretty_midi.Instrument:
     instrument = pretty_midi.Instrument(program=0, is_drum=True, name=STEM_TRACK["drums"])
     for hit in hits:
-        pitch = DRUM_PITCH.get(hit["kind"], DRUM_PITCH["other"])
+        pitch = DRUM_PITCH.get(hit["kind"], 38)
         start = float(hit["time"])
         instrument.notes.append(
             pretty_midi.Note(

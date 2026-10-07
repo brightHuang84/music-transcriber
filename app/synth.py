@@ -94,7 +94,7 @@ def synthesize_example(path: Path | None = None) -> dict:
         for off in (0.25, 0.75, 1.25, 1.75):
             when = bar_start + off
             _add(drums, when, hat)
-            drum_hits.append({"time": when, "kind": "hihat"})
+            drum_hits.append({"time": when, "kind": "hat_closed"})
 
     bass_notes = [
         (0.0, 0.95, 36),  # C2

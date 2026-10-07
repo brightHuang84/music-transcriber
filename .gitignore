@@ -6,6 +6,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 data/
+uploads/
 *.egg-info/
 .DS_Store
 Thumbs.db

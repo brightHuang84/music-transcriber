@@ -109,6 +109,8 @@ fi
 echo "正在安装分析和窗口组件（第一次会比较久）…"
 pyinstall -r "${ROOT}/requirements.txt"
 pyinstall "basic-pitch==0.4.0" --no-deps
+# Drum transcription. --no-deps keeps the torch build chosen above.
+pyinstall --no-deps "adtof-pytorch @ git+https://github.com/xavriley/ADTOF-pytorch.git@85c192e78f716ea0b111cc8a5ee4a8f6a3a4f8a9"
 pyinstall -r "${ROOT}/requirements-desktop.txt"
 
 echo "正在加入应用程序菜单…"

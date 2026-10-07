@@ -94,7 +94,11 @@
       </div>
 
       <div class="transport panel">
-        <button type="button" class="play" id="play" aria-label="播放">播放</button>
+        <div class="transport-buttons">
+          <button type="button" class="play" id="play" aria-label="播放">播放</button>
+          <button type="button" class="ghost" id="stop">停止</button>
+          <button type="button" class="ghost on" id="follow" aria-pressed="true">跟随</button>
+        </div>
         <div class="time">
           <span id="time-now">0:00</span>
           <span id="time-total">0:00</span>
@@ -127,6 +131,7 @@
           </div>
         </div>
         <p class="hint" id="viz-hint"></p>
+        <p class="hint">空格键播放或暂停。点格子或拖进度条可以跳转。拖动滚动条时画面不再自动跟着走，点「跟随」恢复。</p>
       </div>
 
       <div class="split">
@@ -161,7 +166,7 @@
         <ul>
           <li><b>C4</b> 是钢琴正中的那个 C，也叫中央 C。数字越大，音越高。C5 比 C4 高一个八度。</li>
           <li>唱名 <b>do re mi fa sol la si</b> 对应 C D E F G A B。带 # 的是升号，比如 #fa 就是 F#。</li>
-          <li>鼓面上，<b>底鼓</b>常在强拍，<b>军鼓</b>常在第 2、第 4 拍，<b>踩镲</b>打得更密。</li>
+          <li>鼓的每一行是一种鼓。<b>底鼓</b>常在强拍，<b>军鼓</b>常在第 2、第 4 拍，<b>闭镲</b>打得密，<b>开镲</b>会响得更长。<b>叮叮镲</b>是节奏镲，<b>吊镲</b>是重音。<b>高通鼓</b>、<b>中通鼓</b>、<b>落地通鼓</b>音高从高到低。</li>
           <li>竖线是拍子，更重的线是小节的第一拍。圆点会跟着拍子亮一下。</li>
           <li>和弦和调性是估计的，只标大和弦、小和弦，复杂的歌会不准。识谱也会有错音，把它当成学习的起点就好。</li>
         </ul>
@@ -172,6 +177,6 @@
   <footer>
     <p>歌曲只在这台电脑上处理，不会上传到网上。</p>
   </footer>
-  <script src="/app.js"></script>
+  <script src="/app.js?v=3"></script>
 </body>
 </html>
