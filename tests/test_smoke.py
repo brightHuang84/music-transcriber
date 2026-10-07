@@ -52,4 +52,17 @@ def test_pipeline_on_synthesized_clip(tmp_path: Path):
                 assert {"pitch", "start", "end", "duration", "velocity", "name"} <= set(note)
     for name in ("vocals", "bass", "other", "drums", "all"):
         midi = pretty_midi.PrettyMIDI(str(tmp_path / "work" / "midi" / f"{name}.mid"))
-        assert midi.instruments
+        if name == "all":
+            assert midi.instruments
+            continue
+        if name == "drums":
+            expected = result["stems"]["drums"]["hits"]
+        else:
+            expected = result["stems"][name]["notes"]
+        # A stem that is only a noise floor has no notes. pretty_midi drops an
+        # empty track on read, which is the file we want in that case.
+        if expected:
+            assert midi.instruments
+            assert midi.instruments[0].notes
+        else:
+            assert not midi.instruments or not midi.instruments[0].notes
