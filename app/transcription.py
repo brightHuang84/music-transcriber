@@ -104,6 +104,30 @@ def _drop_weak_octave_duplicates(notes: list[dict]) -> list[dict]:
     return kept
 
 
+def _drop_inaudible(notes: list[dict], audio_path: Path, floor: float = 0.005) -> list[dict]:
+    """Ignore notes Basic Pitch draws on a stretch that is effectively silent.
+
+    An empty stem still has a noise floor. If a later section is loud enough
+    that the whole file is not skipped, those quiet stretches get a fake melody.
+    """
+    from app.audio_io import load_audio, to_mono
+
+    audio, sample_rate = load_audio(audio_path)
+    mono = to_mono(audio)
+    kept: list[dict] = []
+    for note in notes:
+        start = max(0, int(float(note["start"]) * sample_rate))
+        end = int(max(float(note["end"]), float(note["start"]) + 0.05) * sample_rate)
+        segment = mono[start:end]
+        if segment.size == 0:
+            continue
+        level = float(np.sqrt(np.mean(np.square(segment.astype(np.float64)))))
+        if level < floor:
+            continue
+        kept.append(note)
+    return kept
+
+
 def transcribe(audio_path: Path, stem: str, midi_tempo: float = 120.0) -> list[dict]:
     """Return notes with pitch, onset, duration, and velocity."""
     from basic_pitch.inference import predict
@@ -143,4 +167,4 @@ def transcribe(audio_path: Path, stem: str, midi_tempo: float = 120.0) -> list[d
                 "velocity": velocity,
             }
         )
-    return _drop_weak_octave_duplicates(_merge_same_pitch(notes))
+    return _drop_inaudible(_drop_weak_octave_duplicates(_merge_same_pitch(notes)), audio_path)
