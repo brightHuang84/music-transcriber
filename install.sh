@@ -69,41 +69,47 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
+# uv 自己下载的 Python。系统里即使有 python3.12，也不要用它来建环境。
+# uv 新建的虚拟环境默认没有 pip，所以后面一律用 uv pip，不调用 python -m pip。
+export UV_PYTHON_PREFERENCE=only-managed
+
 echo "正在准备 Python 3.12…"
 uv python install 3.12
-need_venv=0
-if [ ! -x "${ROOT}/.venv/bin/python" ]; then
-  need_venv=1
-elif ! "${ROOT}/.venv/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info[:2]==(3, 12) else 1)'; then
+
+PY="${ROOT}/.venv/bin/python"
+if [ -e "${ROOT}/.venv" ] && [ ! -x "${PY}" ]; then
+  echo "已有的虚拟环境不完整，将重建。"
+  rm -rf "${ROOT}/.venv"
+elif [ -x "${PY}" ] && ! "${PY}" -c 'import sys; raise SystemExit(0 if sys.version_info[:2]==(3, 12) else 1)'; then
   echo "已有的虚拟环境不是 Python 3.12，将重建。"
   rm -rf "${ROOT}/.venv"
-  need_venv=1
 fi
-if [ "${need_venv}" -eq 1 ]; then
+if [ ! -x "${PY}" ]; then
   uv venv --python 3.12 "${ROOT}/.venv"
 fi
 
-PY="${ROOT}/.venv/bin/python"
-"${PY}" -m pip install -U pip
+pyinstall() {
+  uv pip install --python "${PY}" "$@"
+}
 
 if ! "${PY}" -c "import torch" >/dev/null 2>&1; then
   echo "正在安装 PyTorch…"
   if command -v nvidia-smi >/dev/null 2>&1; then
     echo "检测到 NVIDIA 显卡，安装 CUDA 版。若失败会改用 CPU 版。"
-    if ! "${PY}" -m pip install "torch==2.4.1" "torchaudio==2.4.1"; then
+    if ! pyinstall "torch==2.4.1" "torchaudio==2.4.1"; then
       echo "显卡版没有装上，改为 CPU 版。分析仍然可以跑，只是更慢。"
-      "${PY}" -m pip install "torch==2.4.1" "torchaudio==2.4.1" --index-url https://download.pytorch.org/whl/cpu
+      pyinstall "torch==2.4.1" "torchaudio==2.4.1" --index-url https://download.pytorch.org/whl/cpu
     fi
   else
     echo "没有检测到 NVIDIA 显卡，安装 CPU 版。"
-    "${PY}" -m pip install "torch==2.4.1" "torchaudio==2.4.1" --index-url https://download.pytorch.org/whl/cpu
+    pyinstall "torch==2.4.1" "torchaudio==2.4.1" --index-url https://download.pytorch.org/whl/cpu
   fi
 fi
 
 echo "正在安装分析和窗口组件（第一次会比较久）…"
-"${PY}" -m pip install -r "${ROOT}/requirements.txt"
-"${PY}" -m pip install "basic-pitch==0.4.0" --no-deps
-"${PY}" -m pip install -r "${ROOT}/requirements-desktop.txt"
+pyinstall -r "${ROOT}/requirements.txt"
+pyinstall "basic-pitch==0.4.0" --no-deps
+pyinstall -r "${ROOT}/requirements-desktop.txt"
 
 echo "正在加入应用程序菜单…"
 "${PY}" -m app.install_desktop --root "${ROOT}"

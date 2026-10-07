@@ -14,14 +14,16 @@
 
 适用 Ubuntu 24.04、26.04 这类桌面系统（GNOME）。不需要自己安装或挑选 Python。安装脚本会用 [uv](https://docs.astral.sh/uv/) 下载 Python 3.12，系统自带的更新版本不会被拿来跑这个程序。
 
-在这个文件夹里打开终端，只运行一次：
+在这个文件夹里打开终端，运行：
 
 ```bash
 chmod +x install.sh uninstall.sh
 ./install.sh
 ```
 
-脚本会请你输入开机密码，用来安装 ffmpeg、中文字体和窗口所需的系统库。装完后：
+脚本会请你输入开机密码，用来安装 ffmpeg、中文字体和窗口所需的系统库。它用 uv 下载 Python 3.12 并创建虚拟环境。这个环境里没有 pip，安装包由 `uv pip` 完成。如果上次安装中途停了（例如停在 `No module named pip`），不用删文件夹，再运行一次 `./install.sh` 就会接着装。
+
+装完后：
 
 1. 按 Super 键（许多键盘上标着 Windows 标志）。
 2. 搜索「听音识谱」。
@@ -86,6 +88,9 @@ MIDI 可以用 [MuseScore](https://musescore.org/)（免费）打开，看更接
 
 ## 常见问题
 
+**安装停在 `No module named pip`，或中途报错停了。**  
+再运行一次 `./install.sh`。脚本会用 `uv pip` 继续安装，不需要自己安装 pip，也不需要删掉 `.venv`。
+
 **应用程序菜单里找不到图标。**  
 再运行一次 `./install.sh`。然后注销一次，或按 Super 再搜索「听音识谱」。
 
@@ -110,11 +115,13 @@ MIDI 可以用 [MuseScore](https://musescore.org/)（免费）打开，看更接
 ## 给想改代码的人
 
 ```bash
+export UV_PYTHON_PREFERENCE=only-managed
 uv python install 3.12
 uv venv --python 3.12 .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m pip install "basic-pitch==0.4.0" --no-deps
-.venv/bin/python -m pip install -r requirements-desktop.txt
+# uv 创建的环境没有 pip，用 uv pip，不要用 python -m pip
+uv pip install --python .venv/bin/python -r requirements-dev.txt
+uv pip install --python .venv/bin/python "basic-pitch==0.4.0" --no-deps
+uv pip install --python .venv/bin/python -r requirements-desktop.txt
 # 按 install.sh 里的方式装好 torch / torchaudio（有 nvidia-smi 用 CUDA，否则用 CPU 轮子）
 .venv/bin/python -m pytest tests
 .venv/bin/python -m app.desktop
