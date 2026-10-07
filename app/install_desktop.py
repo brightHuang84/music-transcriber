@@ -43,7 +43,7 @@ def desktop_entry_text(exec_path: Path, icon_path: Path) -> str:
             f"Exec={shlex.quote(str(exec_path))}",
             f"Icon={shlex.quote(str(icon_path))}",
             "Terminal=false",
-            "Categories=AudioVideo;Audio;Music;Education;",
+            "Categories=AudioVideo;Music;",
             "Keywords=music;midi;audio;谱;",
             "StartupNotify=true",
             f"StartupWMClass={APP_ID}",

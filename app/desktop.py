@@ -56,10 +56,18 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     from PySide6.QtCore import QUrl
-    from PySide6.QtGui import QIcon
+    from PySide6.QtGui import QCloseEvent, QIcon
     from PySide6.QtWebEngineCore import QWebEngineDownloadRequest
     from PySide6.QtWebEngineWidgets import QWebEngineView
     from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+
+    class AppWindow(QWebEngineView):
+        def closeEvent(self, event: QCloseEvent) -> None:
+            event.accept()
+            logger.info("窗口关闭，退出程序")
+            # Quit here, not only after exec() returns. A hidden helper
+            # window can keep the process alive after the main window is gone.
+            os._exit(0)
 
     from app.audio_io import ffmpeg_path
     from app.install_desktop import APP_ID, repo_root
@@ -113,7 +121,7 @@ def main() -> int:
     if not start_path.startswith("/"):
         start_path = "/" + start_path
 
-    window = QWebEngineView()
+    window = AppWindow()
     window.setWindowTitle("听音识谱")
     window.resize(1180, 840)
     window.setMinimumSize(880, 640)
@@ -159,11 +167,16 @@ def main() -> int:
     window.show()
     logger.info("听音识谱窗口已打开，端口 %s", port)
 
-    code = application.exec()
-    server.should_exit = True
-    # Analysis runs on a worker thread. Closing the window should leave
-    # no hidden process behind, even if a song is still being processed.
-    os._exit(code)
+    def leave() -> None:
+        server.should_exit = True
+        # WebEngine can stall while it shuts down, and the analysis worker
+        # is not a daemon. Exit immediately so closing the window leaves
+        # no hidden process, even if a song is still being processed.
+        os._exit(0)
+
+    application.aboutToQuit.connect(leave)
+    application.exec()
+    leave()
 
 
 def Path_downloads():

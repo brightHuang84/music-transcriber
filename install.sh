@@ -6,16 +6,21 @@ cd "$(dirname "$0")"
 ROOT="$(pwd)"
 
 echo "听音识谱：开始安装"
-echo "安装过程会请你输入开机密码，用来安装 ffmpeg 等系统组件。"
-echo
 
 if ! command -v sudo >/dev/null 2>&1; then
   echo "没有找到 sudo。请用有管理员权限的账户运行这个脚本。"
   exit 1
 fi
-if ! sudo -v; then
-  echo "没有拿到管理员权限，安装停下来了。"
-  exit 1
+# sudo -v 会刷新密码缓存。已经配置成免密码的机器上，它仍可能因为没有终端而失败。
+if sudo -n true 2>/dev/null; then
+  echo "已有管理员权限，继续安装系统组件。"
+else
+  echo "安装过程会请你输入开机密码，用来安装 ffmpeg 等系统组件。"
+  echo
+  if ! sudo -v; then
+    echo "没有拿到管理员权限，安装停下来了。"
+    exit 1
+  fi
 fi
 
 if command -v apt-get >/dev/null 2>&1; then
@@ -36,7 +41,8 @@ if command -v apt-get >/dev/null 2>&1; then
     libasound2t64 libasound2
   )
   for package in "${candidates[@]}"; do
-    if apt-cache show "$package" >/dev/null 2>&1; then
+    candidate="$(apt-cache policy "$package" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
+    if [ -n "${candidate}" ] && [ "${candidate}" != "(none)" ]; then
       packages+=("$package")
     fi
   done
