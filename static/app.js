@@ -40,7 +40,7 @@ let raf = 0;
 let pxPerSec = 80;
 let playGeneration = 0;
 let followPlayback = true;
-let ignoreScrollUntil = 0;
+let programmaticScroll = 0;
 
 const DRUM_LABEL = Object.fromEntries(DRUM_ROWS.map((row) => [row.kind, row.label]));
 const DRUM_EN = Object.fromEntries(DRUM_ROWS.map((row) => [row.kind, row.en]));
@@ -158,8 +158,11 @@ async function poll(id) {
 }
 
 function setScroll(element, property, value) {
-  ignoreScrollUntil = performance.now() + 120;
+  programmaticScroll += 1;
   element[property] = value;
+  window.setTimeout(() => {
+    programmaticScroll -= 1;
+  }, 0);
 }
 
 function syncTransport() {
@@ -180,7 +183,7 @@ function pauseFollow() {
 }
 
 function userMovedScroll() {
-  if (performance.now() < ignoreScrollUntil || !playing) return;
+  if (programmaticScroll > 0 || !playing) return;
   pauseFollow();
 }
 
@@ -726,7 +729,8 @@ document.querySelector("#error-back").addEventListener("click", resetToDrop);
 window.addEventListener("keydown", (event) => {
   if (!result || event.code !== "Space" || event.repeat) return;
   const tag = event.target && event.target.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  if (tag === "TEXTAREA" || tag === "SELECT") return;
+  if (tag === "INPUT" && event.target.id !== "scrub") return;
   if (event.target && event.target.id === "play") return;
   event.preventDefault();
   togglePlay();
