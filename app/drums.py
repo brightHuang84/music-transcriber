@@ -3,8 +3,11 @@
 ADTOF's Frame RNN (PyTorch) hears five families on the separated drum stem:
 kick, snare, hi-hat, tom, and cymbal. A short look at each hit then splits
 hi-hat into closed/open, cymbal into ride/crash, and tom into high/mid/floor.
-Those names map to General MIDI drum notes. If the model cannot be loaded,
-a simpler spectrum classifier is used so a half-finished install still runs.
+The same onset is kept as one low drum: a model that fires kick, snare, and
+tom together is usually one hit. A low thud is not called a high tom or a
+cymbal unless the sound actually has that brightness. Those names map to
+General MIDI drum notes. If the model cannot be loaded, a simpler spectrum
+classifier is used so a half-finished install still runs.
 """
 
 from __future__ import annotations
@@ -56,14 +59,30 @@ def _decay_seconds(segment: np.ndarray, sample_rate: int, ratio: float = 0.2) ->
         [float(np.sqrt(np.mean(segment[index : index + hop] ** 2))) for index in range(0, segment.size, hop)],
         dtype=np.float32,
     )
-    peak = float(envelope.max()) if envelope.size else 0.0
+    if envelope.size == 0:
+        return 0.0
+    # The hit being named is at the start. A louder drum later in the window
+    # must not become the peak: that made every closed hat before a snare,
+    # and every 16th-note hat, look like an open hat.
+    attack = max(1, int(round(0.04 * sample_rate / hop)))
+    peak_at = int(np.argmax(envelope[:attack]))
+    peak = float(envelope[peak_at])
     if peak <= 1e-6:
         return 0.0
-    peak_at = int(np.argmax(envelope))
     below = np.where(envelope[peak_at:] < peak * ratio)[0]
     if below.size == 0:
         return float(segment.size) / sample_rate
     return float((peak_at + int(below[0])) * hop) / sample_rate
+
+
+def _high_passed(segment: np.ndarray, sample_rate: int, cutoff: float) -> np.ndarray:
+    """Drop low drums so a kick under a hat does not stretch the hat's decay."""
+    if segment.size < 32:
+        return segment
+    spectrum = np.fft.rfft(np.asarray(segment, dtype=np.float32))
+    frequencies = np.fft.rfftfreq(segment.size, 1.0 / sample_rate)
+    spectrum[frequencies < cutoff] = 0
+    return np.fft.irfft(spectrum, n=segment.size).astype(np.float32)
 
 
 def _spectral_flatness(segment: np.ndarray) -> float:
@@ -77,23 +96,29 @@ def _spectral_flatness(segment: np.ndarray) -> float:
 
 
 def _fundamental(segment: np.ndarray, sample_rate: int) -> float:
+    """Lowest strong partial between 45 and 320 Hz.
+
+    Autocorrelation on a low thud peaks at the shortest lag it is allowed to
+    look at, which is about 400 Hz, and that was labeling bass drums as high
+    toms. The spectral peak stays on the low tone.
+    """
     clip = np.asarray(segment[: int(0.09 * sample_rate)], dtype=np.float32)
     if clip.size < 64:
         return 0.0
     clip = clip - float(clip.mean())
-    energy = float(np.dot(clip, clip))
-    if energy <= 1e-8:
+    window = clip * np.hanning(clip.size)
+    spectrum = np.abs(np.fft.rfft(window))
+    frequencies = np.fft.rfftfreq(window.size, 1.0 / sample_rate)
+    band = (frequencies >= 45.0) & (frequencies <= 320.0)
+    if not np.any(band):
         return 0.0
-    correlation = np.correlate(clip, clip, mode="full")[clip.size - 1 :]
-    low_hz, high_hz = 60.0, 400.0
-    min_lag = max(1, int(sample_rate / high_hz))
-    max_lag = min(correlation.size - 1, int(sample_rate / low_hz))
-    if max_lag <= min_lag:
+    peak = float(spectrum[band].max())
+    if peak <= 1e-8:
         return 0.0
-    lag = min_lag + int(np.argmax(correlation[min_lag : max_lag + 1]))
-    if correlation[lag] < 0.25 * correlation[0]:
+    strong = np.where(band & (spectrum >= peak * 0.55))[0]
+    if strong.size == 0:
         return 0.0
-    return float(sample_rate) / float(lag)
+    return float(frequencies[int(strong[0])])
 
 
 def split_family(family: str, segment: np.ndarray, sample_rate: int) -> str:
@@ -103,7 +128,8 @@ def split_family(family: str, segment: np.ndarray, sample_rate: int) -> str:
     if family == "snare":
         return "snare"
     if family == "hat":
-        return "hat_open" if _decay_seconds(segment, sample_rate) >= 0.09 else "hat_closed"
+        bright = _high_passed(segment, sample_rate, 3000.0)
+        return "hat_open" if _decay_seconds(bright, sample_rate) >= 0.09 else "hat_closed"
     if family == "cymbal":
         decay = _decay_seconds(segment, sample_rate, ratio=0.18)
         flatness = _spectral_flatness(segment[: min(segment.size, int(0.12 * sample_rate))])
@@ -118,6 +144,104 @@ def split_family(family: str, segment: np.ndarray, sample_rate: int) -> str:
             return "tom_mid"
         return "tom_floor"
     return "snare"
+
+
+_LOW_KINDS = {"kick", "snare", "tom_high", "tom_mid", "tom_floor"}
+_BRIGHT_KINDS = {"hat_closed", "hat_open", "ride", "crash"}
+
+
+def _attack_profile(segment: np.ndarray, sample_rate: int) -> tuple[float, float, float]:
+    """Noise ratio (700–5000 Hz), air ratio (above 5 kHz), and low pitch."""
+    clip = np.asarray(segment[: max(16, int(0.08 * sample_rate))], dtype=np.float32)
+    if clip.size < 16:
+        return 0.0, 0.0, 0.0
+    clip = clip - float(np.mean(clip))
+    window = clip * np.hanning(clip.size)
+    spectrum = np.abs(np.fft.rfft(window)) ** 2
+    frequencies = np.fft.rfftfreq(window.size, 1.0 / sample_rate)
+    total = float(spectrum.sum()) + 1e-12
+    noise = float(spectrum[(frequencies >= 700.0) & (frequencies < 5000.0)].sum()) / total
+    air = float(spectrum[frequencies >= 5000.0].sum()) / total
+    return noise, air, _fundamental(clip, sample_rate)
+
+
+def _choose_low(
+    kinds: list[str],
+    segment: np.ndarray,
+    sample_rate: int,
+    noise: float,
+    fundamental: float,
+) -> str | None:
+    """One low-drum name for an onset the model may have labeled several times."""
+    if not any(kind in _LOW_KINDS for kind in kinds):
+        return None
+    # Snare wires are noisy. A dark hit around 60 Hz is a kick or a low tom,
+    # even when the model also said snare.
+    if "snare" in kinds and noise >= 0.18:
+        return "snare"
+    pitched = fundamental if fundamental > 0 else _fundamental(segment, sample_rate)
+    if "kick" in kinds and noise < 0.18 and (pitched <= 0 or pitched < 105):
+        return "kick"
+    if pitched >= 70:
+        return split_family("tom", segment, sample_rate)
+    if "kick" in kinds or noise < 0.12:
+        return "kick"
+    if "snare" in kinds:
+        return "snare"
+    return "tom_floor"
+
+
+def clarify_kinds(kinds: list[str], segment: np.ndarray, sample_rate: int) -> list[str]:
+    """Drop labels the audio itself does not support.
+
+    Kick and a hat can happen together. Kick and a tom at the same instant
+    are one hit. A ride or a high tom requires the brightness or the pitch
+    that name implies.
+    """
+    if segment.size < 16 or not kinds:
+        return []
+    noise, air, fundamental = _attack_profile(segment, sample_rate)
+    labels: list[str] = []
+    named_hat = any(kind.startswith("hat_") for kind in kinds)
+    named_cymbal = any(kind in {"ride", "crash"} for kind in kinds)
+    if air >= 0.025 and (named_hat or named_cymbal):
+        if named_cymbal and (not named_hat or air >= 0.06):
+            labels.append(split_family("cymbal", segment, sample_rate))
+        else:
+            labels.append(split_family("hat", segment, sample_rate))
+    low = _choose_low(kinds, segment, sample_rate, noise, fundamental)
+    if low and (not labels or low == "kick"):
+        labels.append(low)
+    if not labels:
+        fallback = low or _choose_low(["kick"], segment, sample_rate, noise, fundamental) or "kick"
+        labels.append(fallback)
+    unique: list[str] = []
+    for label in labels:
+        if label not in unique and label in DRUM_MIDI:
+            unique.append(label)
+    return unique
+
+
+def _clarify_hits(hits: list[dict], mono: np.ndarray, sample_rate: int) -> list[dict]:
+    if not hits:
+        return []
+    ordered = sorted(hits, key=lambda hit: (hit["time"], hit["kind"]))
+    groups: list[list[dict]] = [[ordered[0]]]
+    for hit in ordered[1:]:
+        if hit["time"] - groups[-1][0]["time"] <= 0.045:
+            groups[-1].append(hit)
+        else:
+            groups.append([hit])
+    clarified: list[dict] = []
+    for group in groups:
+        when = min(hit["time"] for hit in group)
+        start = int(when * sample_rate)
+        segment = mono[start : start + int(0.5 * sample_rate)]
+        velocity = max(int(hit["velocity"]) for hit in group)
+        for kind in clarify_kinds([hit["kind"] for hit in group], segment, sample_rate):
+            clarified.append({"time": round(float(when), 4), "kind": kind, "velocity": velocity})
+    clarified.sort(key=lambda hit: (hit["time"], hit["kind"]))
+    return clarified
 
 
 def _band_energy(segment: np.ndarray, sample_rate: int) -> tuple[float, float, float, float]:
@@ -285,8 +409,7 @@ def _detect_with_adtof(audio: np.ndarray, sample_rate: int) -> list[dict]:
             kind = split_family(family, segment, sample_rate)
             velocity = int(np.clip(round(28 + 99 * strength), 1, 127))
             hits.append({"time": round(when, 4), "kind": kind, "velocity": velocity})
-    hits.sort(key=lambda hit: (hit["time"], hit["kind"]))
-    return hits
+    return _clarify_hits(hits, mono, sample_rate)
 
 
 def detect_drums(audio: np.ndarray, sample_rate: int) -> list[dict]:

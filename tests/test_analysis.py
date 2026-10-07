@@ -10,13 +10,13 @@ from fastapi.testclient import TestClient
 
 from app.audio_io import convert_to_wav, load_audio, save_wav
 from app.chords import detect_chords
-from app.drums import DRUM_MIDI, detect_drums_by_spectrum, split_family
+from app.drums import DRUM_MIDI, clarify_kinds, detect_drums_by_spectrum, split_family
 from app.midi_export import write_combined_midi, write_stem_midi
 from app.notes import midi_to_name, midi_to_solfege
 from app.rhythm import analyze_rhythm
 from app.server import app
 from app.synth import synthesize_example
-from app.transcription import transcribe
+from app.transcription import _drop_inaudible, transcribe
 
 
 def test_note_names():
@@ -75,6 +75,54 @@ def test_cymbal_and_tom_splits():
     assert split_family("tom", _tone_burst(80, 0.35, sample_rate), sample_rate) == "tom_floor"
 
 
+def test_low_thud_is_not_called_a_high_tom():
+    sample_rate = 44100
+    thud = _tone_burst(55, 0.3, sample_rate)
+    click = np.random.default_rng(4).standard_normal(int(0.008 * sample_rate)).astype(np.float32)
+    thud = thud.copy()
+    thud[: click.size] += click * 0.8
+    assert split_family("tom", thud, sample_rate) in {"tom_floor", "tom_mid"}
+    found = clarify_kinds(["tom_high"], thud, sample_rate)
+    assert found in (["kick"], ["tom_floor"])
+    assert "tom_high" not in found
+
+
+def test_closed_hats_stay_closed_when_the_next_hit_is_in_the_window():
+    sample_rate = 44100
+    hat = np.random.default_rng(5).standard_normal(int(0.12 * sample_rate)).astype(np.float32)
+    hat *= np.exp(-np.arange(hat.size, dtype=np.float32) / sample_rate / 0.03)
+    window = np.zeros(int(0.5 * sample_rate), dtype=np.float32)
+    for start in (0.0, 0.125, 0.25, 0.375):
+        index = int(start * sample_rate)
+        window[index : index + hat.size] += hat[: window.size - index]
+    assert split_family("hat", hat, sample_rate) == "hat_closed"
+    assert split_family("hat", window, sample_rate) == "hat_closed"
+    # A snare landing while the hat window is still open must not flip the hat.
+    snare = np.random.default_rng(6).standard_normal(int(0.18 * sample_rate)).astype(np.float32)
+    snare *= np.exp(-np.arange(snare.size, dtype=np.float32) / sample_rate / 0.05)
+    mixed = np.zeros(int(0.5 * sample_rate), dtype=np.float32)
+    mixed[: hat.size] += hat
+    at = int(0.12 * sample_rate)
+    mixed[at : at + snare.size] += snare
+    assert split_family("hat", mixed, sample_rate) == "hat_closed"
+
+
+def test_same_onset_is_not_kick_and_tom_and_a_dark_hit_is_not_a_cymbal():
+    sample_rate = 44100
+    kick = _tone_burst(60, 0.25, sample_rate)
+    assert clarify_kinds(["kick", "snare", "tom_floor", "tom_high"], kick, sample_rate) == ["kick"]
+    assert "ride" not in clarify_kinds(["kick", "ride", "snare"], kick, sample_rate)
+    assert "crash" not in clarify_kinds(["crash"], kick, sample_rate)
+    noisy = np.random.default_rng(7).standard_normal(int(0.12 * sample_rate)).astype(np.float32)
+    noisy *= np.exp(-np.arange(noisy.size, dtype=np.float32) / sample_rate / 0.04)
+    # Band-limit toward the snare's noise, leaving the lows quiet.
+    spectrum = np.fft.rfft(noisy)
+    freqs = np.fft.rfftfreq(noisy.size, 1.0 / sample_rate)
+    spectrum[freqs < 800] = 0
+    snare = np.fft.irfft(spectrum, n=noisy.size).astype(np.float32)
+    assert clarify_kinds(["snare", "tom_floor"], snare, sample_rate) == ["snare"]
+
+
 def test_drum_midi_notes_follow_general_midi():
     assert DRUM_MIDI["kick"] == 36
     assert DRUM_MIDI["snare"] == 38
@@ -107,6 +155,21 @@ def test_c_major_chord_and_key():
     assert found["key"] is not None
     assert found["key"]["tonic"] == "C"
     assert found["key"]["mode"] == "major"
+
+
+def test_notes_on_silence_are_dropped(tmp_path: Path):
+    sample_rate = 44100
+    audio = np.zeros((2, sample_rate * 2), dtype=np.float32)
+    time = np.arange(sample_rate, dtype=np.float32) / sample_rate
+    audio[:, sample_rate:] = 0.2 * np.sin(2 * np.pi * 440 * time)
+    path = tmp_path / "gated.wav"
+    save_wav(path, audio, sample_rate)
+    notes = [
+        {"pitch": 69, "start": 0.1, "end": 0.4, "velocity": 80, "name": "A4", "solfege": "la", "duration": 0.3},
+        {"pitch": 69, "start": 1.1, "end": 1.5, "velocity": 80, "name": "A4", "solfege": "la", "duration": 0.4},
+    ]
+    kept = _drop_inaudible(notes, path)
+    assert [note["start"] for note in kept] == [1.1]
 
 
 def test_melody_transcription_finds_the_written_pitches(tmp_path: Path):
