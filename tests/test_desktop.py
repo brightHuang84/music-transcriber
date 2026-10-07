@@ -37,6 +37,16 @@ def test_menu_entry_opens_a_window_without_a_terminal(tmp_path, monkeypatch):
     assert not paths["icon"].exists()
 
 
+def test_install_script_does_not_require_pip_inside_the_venv():
+    source = (Path(__file__).resolve().parents[1] / "install.sh").read_text(encoding="utf-8")
+    commands = "\n".join(
+        line for line in source.splitlines() if not line.strip().startswith("#")
+    )
+    assert "uv pip install --python" in commands
+    assert "-m pip" not in commands
+    assert "UV_PYTHON_PREFERENCE=only-managed" in commands
+
+
 def test_webengine_flags_are_set_before_pyside_imports():
     source = (Path(__file__).resolve().parents[1] / "app" / "desktop.py").read_text(encoding="utf-8")
     flags = source.index("QTWEBENGINE_CHROMIUM_FLAGS")
