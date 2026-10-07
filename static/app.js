@@ -74,7 +74,7 @@ async function upload(file) {
   try {
     response = await fetch("/api/analyze", { method: "POST", body });
   } catch {
-    showError("连不上本机程序。请确认黑色窗口还开着，然后刷新页面。");
+    showError("连不上本机程序。请关掉听音识谱，再从应用程序菜单重新打开。");
     return;
   }
   if (!response.ok) {
@@ -92,7 +92,7 @@ async function startDemo() {
   try {
     response = await fetch("/api/demo", { method: "POST" });
   } catch {
-    showError("连不上本机程序。请确认黑色窗口还开着，然后刷新页面。");
+    showError("连不上本机程序。请关掉听音识谱，再从应用程序菜单重新打开。");
     return;
   }
   if (!response.ok) {
@@ -128,7 +128,7 @@ async function poll(id) {
   try {
     response = await fetch(`/api/jobs/${id}`);
   } catch {
-    showError("连不上本机程序。请确认黑色窗口还开着，然后刷新页面。");
+    showError("连不上本机程序。请关掉听音识谱，再从应用程序菜单重新打开。");
     return;
   }
   if (!response.ok) {
@@ -576,7 +576,7 @@ async function present(data) {
   try {
     await loadBuffers(data.id);
   } catch {
-    showError("结果已经出来了，但播放器没有读到音频。可以刷新页面再打开这次分析。");
+    showError("结果已经出来了，但播放器没有读到音频。请关掉听音识谱，再从应用程序菜单重新打开。");
     return;
   }
   renderChords();
