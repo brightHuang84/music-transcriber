@@ -144,7 +144,7 @@ main { display: grid; gap: 16px; padding-bottom: 28px; }
   line-height: 1.45;
 }
 
-.primary, .ghost, .play, .stem-tabs button, .listen button {
+.primary, .ghost, .play, .stem-tabs button, .listen button, .view-tools button {
   border-radius: 999px;
   cursor: pointer;
 }
@@ -298,6 +298,66 @@ main { display: grid; gap: 16px; padding-bottom: 28px; }
 .stem-tabs button[data-stem="guitar"].on { background: var(--guitar); border-color: var(--guitar); }
 .stem-tabs button[data-stem="piano"].on { background: var(--piano); border-color: var(--piano); }
 .stem-tabs button.quiet { opacity: 0.42; }
+
+.view-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  align-items: center;
+  margin: 10px 0 4px;
+}
+
+.view-tools .group { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.view-tools button {
+  border: 1px solid var(--line);
+  background: var(--card);
+  padding: 8px 12px;
+  color: var(--ink);
+}
+
+.view-tools button.on {
+  background: var(--ink);
+  color: #f6efe4;
+  border-color: var(--ink);
+}
+
+.view-tools button[data-role="melody"].on { background: var(--cinnabar); border-color: var(--cinnabar); }
+
+.view-tools button:disabled { opacity: 0.4; cursor: default; }
+
+.staff-scroll {
+  overflow: auto;
+  max-height: 520px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px 12px 16px;
+}
+
+.staff-caption { margin: 4px 0 8px; color: var(--ink); }
+
+#osmd-container { position: relative; min-height: 180px; }
+
+#osmd-container text { font-family: "Noto Sans SC", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif; }
+
+td.role-melody { color: var(--cinnabar); font-weight: 600; }
+
+@media print {
+  body { background: white; }
+  body * { visibility: hidden; }
+  #staff-scroll, #staff-scroll * { visibility: visible; }
+  #staff-scroll {
+    position: absolute;
+    left: 0;
+    top: 0;
+    overflow: visible;
+    max-height: none;
+    height: auto;
+    border: none;
+  }
+  #print-staff, #staff-status { display: none !important; }
+}
 
 .stem-note { margin: 0; color: var(--muted); }
 

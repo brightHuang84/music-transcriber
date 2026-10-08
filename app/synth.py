@@ -271,6 +271,60 @@ def synthesize_ensemble(path: Path | None = None) -> dict:
     }
 
 
+def synthesize_lead_sheet(path: Path | None = None) -> dict:
+    """A known melody above block chords. The melody is always the top note.
+
+    Nothing starts at time zero, because Basic Pitch often drops that note.
+    Chord tones stay at or below G4. The tune stays at or above C5.
+    """
+    offset = 0.30
+    duration = 8.6
+    frames = int(duration * SAMPLE_RATE)
+    chords = np.zeros(frames, dtype=np.float32)
+    melody = np.zeros(frames, dtype=np.float32)
+    # One bar each: C, F, G, C. Inner voices stay under the tune.
+    chord_plan = [
+        (offset + 0.0, offset + 1.95, (60, 64, 67)),
+        (offset + 2.0, offset + 3.95, (53, 57, 60)),
+        (offset + 4.0, offset + 5.95, (55, 59, 62)),
+        (offset + 6.0, offset + 7.95, (60, 64, 67)),
+    ]
+    melody_notes = [
+        (offset + 0.00, offset + 0.90, 76),  # E5
+        (offset + 1.00, offset + 1.90, 79),  # G5
+        (offset + 2.00, offset + 2.90, 81),  # A5
+        (offset + 3.00, offset + 3.90, 77),  # F5
+        (offset + 4.00, offset + 4.90, 83),  # B5
+        (offset + 5.00, offset + 5.90, 79),  # G5
+        (offset + 6.00, offset + 6.90, 76),  # E5
+        (offset + 7.00, offset + 7.90, 72),  # C5
+    ]
+    for start, end, pitches in chord_plan:
+        for midi in pitches:
+            frequency = 440.0 * 2 ** ((midi - 69) / 12)
+            _add(chords, start, _piano_tone(frequency, end - start) * 0.18)
+    for start, end, midi in melody_notes:
+        frequency = 440.0 * 2 ** ((midi - 69) / 12)
+        _add(melody, start, _tone(frequency, end - start, harmonics=(1.0, 0.28, 0.08)) * 0.62)
+    mix = (chords + melody).astype(np.float32)
+    peak = float(np.max(np.abs(mix)) + 1e-8)
+    mix = np.clip(mix / peak * 0.9, -1, 1)
+
+    def stereo(mono: np.ndarray) -> np.ndarray:
+        return np.stack([mono, mono], axis=0)
+
+    if path is not None:
+        save_wav(path, stereo(mix), SAMPLE_RATE)
+    return {
+        "sample_rate": SAMPLE_RATE,
+        "bpm": BPM,
+        "duration": duration,
+        "melody": melody_notes,
+        "chords": chord_plan,
+        "audio": stereo(mix),
+    }
+
+
 def _chord_audio() -> np.ndarray:
     """Two seconds of a C major triad, used by the chord test."""
     frames = int(2.0 * SAMPLE_RATE)

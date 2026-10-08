@@ -64,6 +64,66 @@ def write_stem_midi(path: Path, stem: str, bpm: float, notes: list[dict] | None 
     midi.write(str(path))
 
 
+def write_part_midi(path: Path, bpm: float, notes: list[dict], program: int, track_name: str) -> None:
+    """One melodic track. Used for the melody line and for the harmony under it."""
+    midi = _new_midi(bpm)
+    instrument = pretty_midi.Instrument(program=int(program), is_drum=False, name=track_name)
+    for note in notes:
+        end = max(float(note["end"]), float(note["start"]) + 0.05)
+        instrument.notes.append(
+            pretty_midi.Note(
+                velocity=int(note.get("velocity") or 80),
+                pitch=int(note["pitch"]),
+                start=float(note["start"]),
+                end=end,
+            )
+        )
+    midi.instruments.append(instrument)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    midi.write(str(path))
+
+
+def write_lead_midi(
+    path: Path,
+    bpm: float,
+    melody: list[dict],
+    harmony: list[dict],
+    bass_notes: list[dict],
+    hits: list[dict],
+) -> None:
+    """Melody, harmony, bass, and drums, without a second copy of each stem."""
+    midi = _new_midi(bpm)
+    melody_track = pretty_midi.Instrument(program=73, is_drum=False, name="Melody")
+    harmony_track = pretty_midi.Instrument(program=0, is_drum=False, name="Harmony")
+    for note in melody:
+        end = max(float(note["end"]), float(note["start"]) + 0.05)
+        melody_track.notes.append(
+            pretty_midi.Note(
+                velocity=int(note.get("velocity") or 80),
+                pitch=int(note["pitch"]),
+                start=float(note["start"]),
+                end=end,
+            )
+        )
+    for note in harmony:
+        end = max(float(note["end"]), float(note["start"]) + 0.05)
+        harmony_track.notes.append(
+            pretty_midi.Note(
+                velocity=int(note.get("velocity") or 70),
+                pitch=int(note["pitch"]),
+                start=float(note["start"]),
+                end=end,
+            )
+        )
+    midi.instruments.append(melody_track)
+    midi.instruments.append(harmony_track)
+    if bass_notes:
+        midi.instruments.append(_pitched_instrument("bass", bass_notes))
+    midi.instruments.append(_drum_instrument(hits))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    midi.write(str(path))
+
+
 def write_combined_midi(
     path: Path,
     bpm: float,
