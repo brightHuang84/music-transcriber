@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>听音识谱</title>
-  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/style.css?v=5" />
 </head>
 <body>
   <header class="top">
@@ -15,7 +15,7 @@
         <h1>听音识谱</h1>
       </div>
     </div>
-    <p class="lede">放入一首歌，它会把人声、鼓、贝斯分开，也能再拆出钢琴和吉他，并告诉你每个音叫什么、节奏落在哪里。</p>
+    <p class="lede">放入一首歌，它会把人声、鼓、贝斯分开，也能再拆出钢琴和吉他，标出旋律和和声，并画出能跟着看的五线谱。</p>
   </header>
 
   <main>
@@ -68,7 +68,7 @@
         <li data-step="notes">识别音高</li>
         <li data-step="drums">识别鼓点</li>
         <li data-step="chords">估计和弦</li>
-        <li data-step="midi">生成 MIDI</li>
+        <li data-step="midi">生成乐谱</li>
       </ol>
       <p class="hint">请不要关闭听音识谱窗口。关掉窗口会停掉正在进行的分析。</p>
     </section>
@@ -131,10 +131,27 @@
       </div>
 
       <div class="stem-tabs" role="tablist" aria-label="乐器"></div>
+      <div class="view-tools">
+        <div class="group" role="group" aria-label="旋律还是和声">
+          <button type="button" data-role="both" class="on">旋律和和声</button>
+          <button type="button" data-role="melody">只看旋律</button>
+          <button type="button" data-role="harmony">只看和声</button>
+        </div>
+        <div class="group" role="group" aria-label="看哪一段">
+          <button type="button" data-scope="stem" class="on">当前乐器</button>
+          <button type="button" data-scope="song">整首歌</button>
+        </div>
+        <div class="group" role="group" aria-label="怎么看">
+          <button type="button" data-view="roll" class="on">钢琴卷帘</button>
+          <button type="button" data-view="staff">五线谱</button>
+        </div>
+        <button type="button" class="ghost" id="print-staff" hidden>打印五线谱</button>
+      </div>
       <p class="stem-note" id="stem-note"></p>
+      <p class="hint" id="role-note"></p>
 
       <div class="stage panel">
-        <div class="roll-wrap">
+        <div class="roll-wrap" id="roll-wrap">
           <div class="gutter" id="gutter"></div>
           <div class="roll-scroll" id="roll-scroll">
             <div class="roll-inner" id="roll-inner">
@@ -144,8 +161,13 @@
             </div>
           </div>
         </div>
+        <div class="staff-scroll" id="staff-scroll" hidden>
+          <p class="staff-caption" id="staff-caption"></p>
+          <div id="osmd-container"></div>
+          <p class="hint" id="staff-status"></p>
+        </div>
         <p class="hint" id="viz-hint"></p>
-        <p class="hint">空格键播放或暂停。点格子或拖进度条可以跳转。用滚轮或滚动条移动画面后，不再自动跟着走，点「跟随」恢复。</p>
+        <p class="hint">空格键播放或暂停。点格子或拖进度条可以跳转。用滚轮或滚动条移动画面后，不再自动跟着走，点「跟随」恢复。五线谱也一样，播放时高亮会跟着换行。</p>
       </div>
 
       <div class="split">
@@ -157,6 +179,7 @@
                 <tr>
                   <th>音名</th>
                   <th>唱名</th>
+                  <th>角色</th>
                   <th>开始</th>
                   <th>时长</th>
                   <th>力度</th>
@@ -169,9 +192,9 @@
         </section>
         <section class="panel downloads">
           <h3>保存下来</h3>
-          <p>MIDI 可以用 MuseScore 等软件打开，继续看五线谱。音轨是 wav，可以单独再听。</p>
+          <p>五线谱可以在上面直接看。MusicXML 用 MuseScore 打开就是同一份谱。点「打印五线谱」可以存成 PDF。MIDI 也能用 MuseScore 打开。音轨是 wav，可以单独再听。</p>
           <div class="download-grid" id="download-grid"></div>
-          <a class="primary linkish" id="bundle-link" href="#">打包下载全部音轨和 MIDI</a>
+          <a class="primary linkish" id="bundle-link" href="#">打包下载全部音轨、MIDI 和五线谱</a>
         </section>
       </div>
 
@@ -183,6 +206,9 @@
           <li>鼓的每一行是一种鼓。<b>底鼓</b>常在强拍，<b>军鼓</b>常在第 2、第 4 拍，<b>闭镲</b>打得密，<b>开镲</b>会响得更长。<b>叮叮镲</b>是节奏镲，<b>吊镲</b>是重音。<b>高通鼓</b>、<b>中通鼓</b>、<b>落地通鼓</b>音高从高到低。</li>
           <li>竖线是拍子，更重的线是小节的第一拍。圆点会跟着拍子亮一下。</li>
           <li>精细模式会多出钢琴和吉他。变灰的按钮是这首歌里几乎没有声音的轨，点开也能看。小提琴、大提琴、管乐和合成器目前算在「其他乐器」里。</li>
+          <li>砖红色的音是旋律。其他颜色是和声：和弦、铺底、分解和弦。贝斯单独算低音，不放进旋律，也不放进和声。</li>
+          <li>「只看旋律」「只看和声」可以分开看。「当前乐器」是这一轨自己的旋律；「整首歌」是整首最突出的那条线。人声又轻又少时，不会把漏进来的人声当成主旋律。</li>
+          <li>「五线谱」按检测到的调号、拍号和速度对齐到八分音符，方便初学，不会写成一堆很碎的短音。和弦名写在谱表上方。钢琴用高低音双谱表。鼓谱仍按十六分音符。</li>
           <li>和弦和调性是估计的，只标大和弦、小和弦，复杂的歌会不准。识谱也会有错音，把它当成学习的起点就好。</li>
         </ul>
       </section>
@@ -192,6 +218,7 @@
   <footer>
     <p>歌曲只在这台电脑上处理，不会上传到网上。</p>
   </footer>
-  <script src="/app.js?v=4"></script>
+  <script src="/vendor/opensheetmusicdisplay.min.js"></script>
+  <script src="/app.js?v=5"></script>
 </body>
 </html>

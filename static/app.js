@@ -46,6 +46,13 @@ let playGeneration = 0;
 let wallStarted = 0;
 let followPlayback = true;
 let rollLayout = null;
+let noteRole = "both";
+let noteScope = "stem";
+let stageView = "roll";
+let osmd = null;
+let sheetTimes = [];
+let staffIndex = 0;
+let staffToken = 0;
 
 const DRUM_LABEL = Object.fromEntries(DRUM_ROWS.map((row) => [row.kind, row.label]));
 const DRUM_EN = Object.fromEntries(DRUM_ROWS.map((row) => [row.kind, row.en]));
@@ -220,7 +227,7 @@ function activeRollY(time) {
     if (row < 0) return null;
     return chordLane + (row + 0.5) * rollLayout.rowH;
   }
-  const notes = (result.stems[viewStem].notes || []).filter((note) => time >= note.start && time < note.end);
+  const notes = visibleNotes().filter((note) => time >= note.start && time < note.end);
   if (!notes.length || rollLayout.maxPitch == null) return null;
   const y = (rollLayout.maxPitch - notes[0].pitch) * rollLayout.rowH;
   return chordLane + y + rollLayout.rowH / 2;
@@ -379,16 +386,63 @@ function chordAt(time) {
   return (result.chords || []).find((chord) => time >= chord.start && time < chord.end);
 }
 
+function roleLabel(role) {
+  if (role === "melody") return "旋律";
+  if (role === "harmony") return "和声";
+  if (role === "bass") return "贝斯";
+  return "—";
+}
+
+function matchesRole(note) {
+  if (!note.role) return true;
+  if (noteRole === "both") return true;
+  return note.role === noteRole;
+}
+
+function visibleNotes() {
+  if (!result) return [];
+  if (noteScope === "song") {
+    if (!Array.isArray(result.melody)) return [];
+    const melody = result.melody || [];
+    const harmony = result.harmony || [];
+    if (noteRole === "melody") return melody;
+    if (noteRole === "harmony") return harmony;
+    return melody.concat(harmony);
+  }
+  if (viewStem === "drums") return [];
+  const notes = (result.stems[viewStem] && result.stems[viewStem].notes) || [];
+  if (viewStem === "bass") return notes;
+  return notes.filter(matchesRole);
+}
+
+function noteColor(note) {
+  if (note.role === "melody") return "#c24b2c";
+  const stem = note.source && STEMS[note.source] ? note.source : viewStem;
+  return (STEMS[stem] && STEMS[stem].color) || "#2d6d9a";
+}
+
+function musicXmlName() {
+  if (noteScope === "song") {
+    if (noteRole === "melody") return "song_melody";
+    if (noteRole === "harmony") return "song_harmony";
+    return "song";
+  }
+  if (viewStem === "drums") return "drums";
+  if (viewStem === "bass") return "bass";
+  if (noteRole === "melody") return `${viewStem}_melody`;
+  if (noteRole === "harmony") return `${viewStem}_harmony`;
+  return viewStem;
+}
+
 function notesAt(time) {
   const stem = result.stems[viewStem];
   if (!stem) return [];
-  if (viewStem === "drums") {
+  if (viewStem === "drums" && noteScope === "stem") {
     return (stem.hits || [])
       .filter((hit) => Math.abs(hit.time - time) < 0.09)
       .map((hit) => ({ name: DRUM_LABEL[hit.kind] || hit.kind, solfege: hit.kind }));
   }
-  if (!stem.notes) return [];
-  return stem.notes.filter((note) => time >= note.start && time < note.end);
+  return visibleNotes().filter((note) => time >= note.start && time < note.end);
 }
 
 function paint(time) {
@@ -410,7 +464,8 @@ function paint(time) {
     const active = time >= start && time < end;
     row.classList.toggle("active", active);
   });
-  if (viewStem === "drums") drawDrums(time);
+  if (stageView === "staff") syncStaffCursor(time);
+  else if (viewStem === "drums" && noteScope === "stem") drawDrums(time);
   else drawPiano(time);
   if (followPlayback) followPlayhead(time);
 }
@@ -462,7 +517,7 @@ function drawPiano(time) {
   const ctx = canvas.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
-  const notes = result.stems[viewStem].notes || [];
+  const notes = visibleNotes();
   const gutter = document.querySelector("#gutter");
   gutter.innerHTML = "";
   gutter.style.height = `${height}px`;
@@ -470,7 +525,10 @@ function drawPiano(time) {
     rollLayout = null;
     ctx.fillStyle = "#6f6256";
     ctx.font = "16px sans-serif";
-    ctx.fillText("这一轨没有识别到音符。", 16, 40);
+    const message = noteScope === "song" && !Array.isArray(result.melody)
+      ? "这份结果是旧的，请重新分析一次，才能分开旋律和和声。"
+      : "当前筛选下没有音符。可以改成「旋律和和声」。";
+    ctx.fillText(message, 16, 40);
     return;
   }
   const pitches = notes.map((note) => note.pitch);
@@ -493,14 +551,13 @@ function drawPiano(time) {
       gutter.appendChild(label);
     }
   }
-  const color = STEMS[viewStem].color;
   notes.forEach((note) => {
     const x = note.start * pxPerSec;
     const w = Math.max(4, (note.end - note.start) * pxPerSec - 2);
     const y = (maxPitch - note.pitch) * rowH + 2;
     const sounding = time >= note.start && time < note.end;
     ctx.globalAlpha = 0.45 + (note.velocity / 127) * 0.55;
-    ctx.fillStyle = color;
+    ctx.fillStyle = noteColor(note);
     roundRect(ctx, x, y, w, rowH - 4, 5);
     ctx.fill();
     if (sounding) {
@@ -609,26 +666,28 @@ function renderNoteTable() {
   const title = document.querySelector("#list-title");
   const hint = document.querySelector("#list-hint");
   body.innerHTML = "";
-  if (viewStem === "drums") {
+  if (viewStem === "drums" && noteScope === "stem") {
     title.textContent = "鼓点";
     const hits = result.stems.drums.hits || [];
     hits.slice(0, 400).forEach((hit) => {
       const row = document.createElement("tr");
       row.dataset.start = String(hit.time);
       row.dataset.end = String(hit.time + 0.1);
-      row.innerHTML = `<td>${DRUM_LABEL[hit.kind] || hit.kind}</td><td>${DRUM_EN[hit.kind] || ""}</td><td>${formatTime(hit.time)}</td><td>—</td><td>${hit.velocity}</td>`;
+      row.innerHTML = `<td>${DRUM_LABEL[hit.kind] || hit.kind}</td><td>${DRUM_EN[hit.kind] || ""}</td><td>鼓</td><td>${formatTime(hit.time)}</td><td>—</td><td>${hit.velocity}</td>`;
       body.appendChild(row);
     });
     hint.textContent = hits.length > 400 ? "只列出前 400 个鼓点，上面的格子是完整的。" : `一共 ${hits.length} 下。`;
     return;
   }
-  title.textContent = `${STEMS[viewStem].label}的音符`;
-  const notes = result.stems[viewStem].notes || [];
+  const songView = noteScope === "song";
+  title.textContent = songView ? "整首歌的音符" : `${STEMS[viewStem].label}的音符`;
+  const notes = visibleNotes();
   notes.slice(0, 400).forEach((note) => {
     const row = document.createElement("tr");
     row.dataset.start = String(note.start);
     row.dataset.end = String(note.end);
-    row.innerHTML = `<td>${note.name}</td><td>${note.solfege}</td><td>${formatTime(note.start)}</td><td>${note.duration.toFixed(2)} 秒</td><td>${note.velocity}</td>`;
+    const roleClass = note.role === "melody" ? "role-melody" : "";
+    row.innerHTML = `<td>${note.name}</td><td>${note.solfege}</td><td class="${roleClass}">${roleLabel(note.role)}</td><td>${formatTime(note.start)}</td><td>${Number(note.duration).toFixed(2)} 秒</td><td>${note.velocity}</td>`;
     body.appendChild(row);
   });
   hint.textContent = notes.length
@@ -642,9 +701,27 @@ function renderDownloads() {
   const items = [
     ["这一轨音频", `/api/jobs/${id}/audio/${viewStem}`, `${viewStem}.wav`],
     ["这一轨 MIDI", `/api/jobs/${id}/midi/${viewStem}`, `${viewStem}.mid`],
+  ];
+  if (Array.isArray(result.melody)) {
+    if (viewStem !== "bass" && viewStem !== "drums") {
+      items.push(
+        ["这一轨的旋律", `/api/jobs/${id}/midi/${viewStem}_melody`, `${viewStem}_melody.mid`],
+        ["这一轨的和声", `/api/jobs/${id}/midi/${viewStem}_harmony`, `${viewStem}_harmony.mid`],
+      );
+    }
+    const sheet = musicXmlName();
+    items.push(
+      ["整首旋律", `/api/jobs/${id}/midi/melody`, "melody.mid"],
+      ["整首和声", `/api/jobs/${id}/midi/harmony`, "harmony.mid"],
+      ["旋律和声加贝斯鼓", `/api/jobs/${id}/midi/lead`, "lead.mid"],
+      ["当前五线谱", `/api/jobs/${id}/musicxml/${sheet}`, `${sheet}.musicxml`],
+      ["整首五线谱", `/api/jobs/${id}/musicxml/song`, "song.musicxml"],
+    );
+  }
+  items.push(
     ["原曲音频", `/api/jobs/${id}/audio/mix`, "mix.wav"],
     ["全部 MIDI", `/api/jobs/${id}/midi/all`, "all.mid"],
-  ];
+  );
   grid.innerHTML = items.map(([label, href, filename]) =>
     `<a href="${href}" download="${filename}">${label}</a>`).join("");
   const bundle = document.querySelector("#bundle-link");
@@ -657,7 +734,13 @@ function describeStem() {
   const meta = STEMS[viewStem];
   const note = document.querySelector("#stem-note");
   const hint = document.querySelector("#viz-hint");
-  if (stem.silent) {
+  if (noteScope === "song") {
+    if (!Array.isArray(result.melody)) {
+      note.textContent = "这份结果是旧的，请重新分析一次，才能分开旋律和和声。";
+    } else {
+      note.textContent = `整首歌分出 ${(result.melody || []).length} 个旋律音、${(result.harmony || []).length} 个和声音。贝斯单独在贝斯轨里。`;
+    }
+  } else if (stem.silent) {
     note.textContent = `${meta.label}这一轨几乎没有声音，这首歌里可能没有它，或者它被分到了别的轨。`;
   } else if (viewStem === "drums") {
     const hits = stem.hits || [];
@@ -670,14 +753,207 @@ function describeStem() {
     note.textContent = parts.length
       ? `${parts.join("，")}。格子按 16 分音符对齐到拍子上。`
       : "这一轨没有识别到鼓点。";
+  } else if (viewStem === "bass") {
+    note.textContent = `${meta.label}（${meta.en}）识别到 ${(stem.notes || []).length} 个音。贝斯是低音，不拿来当旋律。`;
   } else {
-    note.textContent = `${meta.label}（${meta.en}）识别到 ${(stem.notes || []).length} 个音。横轴是时间，竖轴是音高。`;
+    const all = stem.notes || [];
+    const melodyCount = all.filter((item) => item.role === "melody").length;
+    const harmonyCount = all.filter((item) => item.role === "harmony").length;
+    note.textContent = melodyCount || harmonyCount
+      ? `${meta.label}里有 ${melodyCount} 个旋律音、${harmonyCount} 个和声音。横轴是时间，竖轴是音高。`
+      : `${meta.label}（${meta.en}）识别到 ${all.length} 个音。横轴是时间，竖轴是音高。`;
   }
+  const looking = noteScope === "song" ? "整首歌" : meta.label;
   hint.textContent = listenMode === "solo"
     ? `正在只听${meta.label}。`
     : listenMode === "all"
       ? "正在把有声音的音轨合在一起听。几乎没声音的轨不会加进来。"
-      : `正在听原曲，画面是${meta.label}。`;
+      : `正在听原曲，画面是${looking}。`;
+}
+
+function syncRoleButtons() {
+  const locked = noteScope === "stem" && (viewStem === "drums" || viewStem === "bass");
+  document.querySelectorAll("[data-role]").forEach((button) => {
+    button.disabled = locked;
+    const active = locked ? button.dataset.role === "both" : button.dataset.role === noteRole;
+    button.classList.toggle("on", active);
+  });
+  document.querySelectorAll("[data-scope]").forEach((button) => {
+    button.classList.toggle("on", button.dataset.scope === noteScope);
+  });
+  const roleNote = document.querySelector("#role-note");
+  if (!roleNote) return;
+  if (locked && viewStem === "bass") {
+    roleNote.textContent = "贝斯是单独的低音，不算旋律，也不算和声。要看主旋律，点「整首歌」。";
+  } else if (locked && viewStem === "drums") {
+    roleNote.textContent = "鼓用鼓谱。旋律和和声在有音高的乐器里，也可以点「整首歌」。";
+  } else if (noteScope === "song" && result && result.melody_source === "vocals") {
+    roleNote.textContent = "人声比较清楚，整首旋律用人声。砖红色是旋律，其他颜色是和声。";
+  } else if (noteScope === "song") {
+    roleNote.textContent = "整首旋律是各乐器里最突出的那条线，贝斯不算在里面。砖红色是旋律，其他颜色是和声。";
+  } else {
+    roleNote.textContent = "砖红色是这一轨的旋律，原来的颜色是和声、和弦或伴奏。";
+  }
+}
+
+function staffCaption() {
+  const key = result.key ? result.key.name : "调性不确定";
+  const meter = result.time_signature || "4/4";
+  let what = "旋律和和声";
+  if (noteScope === "stem" && viewStem === "drums") what = "鼓谱";
+  else if (noteScope === "stem" && viewStem === "bass") what = "贝斯";
+  else if (noteRole === "melody") what = "只看旋律";
+  else if (noteRole === "harmony") what = "只看和声";
+  const where = noteScope === "song" ? "整首歌" : STEMS[viewStem].label;
+  return `${where} · ${what} · ${key} · ${meter}。音长已经对齐到八分音符，方便初学跟着看。`;
+}
+
+function applyStage() {
+  const staff = stageView === "staff";
+  const roll = document.querySelector("#roll-wrap");
+  const sheet = document.querySelector("#staff-scroll");
+  const printButton = document.querySelector("#print-staff");
+  if (roll) roll.hidden = staff;
+  if (sheet) sheet.hidden = !staff;
+  if (printButton) printButton.hidden = !staff;
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    button.classList.toggle("on", button.dataset.view === stageView);
+  });
+}
+
+function indexStaff() {
+  sheetTimes = [];
+  staffIndex = 0;
+  if (!osmd || !osmd.cursor) return;
+  osmd.FollowCursor = false;
+  osmd.cursor.reset();
+  osmd.cursor.show();
+  if (osmd.cursor.cursorOptions) osmd.cursor.cursorOptions.color = "#c24b2c";
+  const iterator = osmd.cursor.iterator;
+  const beat = 60 / (result.bpm || 120);
+  let guard = 0;
+  while (iterator && !iterator.EndReached && guard < 30000) {
+    const stamp = iterator.currentTimeStamp;
+    const whole = stamp && Number.isFinite(stamp.RealValue) ? stamp.RealValue : 0;
+    sheetTimes.push(whole * 4 * beat);
+    if (typeof iterator.moveToNextVisibleVoiceEntry === "function") iterator.moveToNextVisibleVoiceEntry(false);
+    else break;
+    guard += 1;
+  }
+  osmd.cursor.reset();
+  osmd.cursor.show();
+  staffIndex = 0;
+}
+
+function scrollStaffCursor(immediate) {
+  const scroller = document.querySelector("#staff-scroll");
+  const el = osmd && osmd.cursor && osmd.cursor.cursorElement;
+  if (!scroller || !el || !followPlayback) return;
+  const rect = el.getBoundingClientRect();
+  const host = scroller.getBoundingClientRect();
+  if (!rect.height && !rect.width) return;
+  const top = scroller.scrollTop + (rect.top - host.top);
+  const view = scroller.clientHeight;
+  const outside = rect.top < host.top + 24 || rect.bottom > host.bottom - 24;
+  nudgeScroll(scroller, "scrollTop", top - view * 0.35, immediate || outside);
+}
+
+function syncStaffCursor(time) {
+  if (!osmd || !osmd.cursor || !sheetTimes.length) return;
+  let target = 0;
+  const limit = time + 0.04;
+  for (let index = 0; index < sheetTimes.length; index += 1) {
+    if (sheetTimes[index] <= limit) target = index;
+  }
+  const cursor = osmd.cursor;
+  const iterator = cursor.iterator;
+  if (!iterator || typeof iterator.moveToNextVisibleVoiceEntry !== "function") return;
+  if (target === staffIndex) {
+    scrollStaffCursor(!playing);
+    return;
+  }
+  if (target < staffIndex) {
+    cursor.reset();
+    staffIndex = 0;
+  }
+  let guard = 0;
+  while (staffIndex < target && guard < 30000) {
+    iterator.moveToNextVisibleVoiceEntry(false);
+    staffIndex += 1;
+    guard += 1;
+  }
+  if (typeof cursor.update === "function") cursor.update();
+  scrollStaffCursor(!playing);
+}
+
+async function loadStaff() {
+  const token = ++staffToken;
+  const caption = document.querySelector("#staff-caption");
+  const status = document.querySelector("#staff-status");
+  const container = document.querySelector("#osmd-container");
+  if (caption) caption.textContent = staffCaption();
+  if (!window.opensheetmusicdisplay) {
+    if (status) status.textContent = "五线谱组件没有装好。请重新运行安装脚本。";
+    return;
+  }
+  if (status) status.textContent = "正在画五线谱…";
+  const name = musicXmlName();
+  let response;
+  try {
+    response = await fetch(`/api/jobs/${job.id}/musicxml/${name}`);
+  } catch {
+    if (token !== staffToken) return;
+    if (status) status.textContent = "五线谱没有载入。请确认程序还开着。";
+    return;
+  }
+  if (token !== staffToken) return;
+  if (!response.ok) {
+    if (status) status.textContent = "这份结果是旧的，请重新分析一次，才能看五线谱。";
+    container.innerHTML = "";
+    osmd = null;
+    sheetTimes = [];
+    return;
+  }
+  const xml = await response.text();
+  if (token !== staffToken) return;
+  container.innerHTML = "";
+  try {
+    osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay(container, {
+      autoResize: true,
+      backend: "svg",
+      drawTitle: false,
+      drawPartNames: true,
+      drawMeasureNumbers: true,
+      drawCredits: false,
+      followCursor: false,
+    });
+    osmd.FollowCursor = false;
+    if (osmd.EngravingRules) {
+      osmd.EngravingRules.DefaultFontFamily = "Noto Sans SC, Noto Sans CJK SC, sans-serif";
+    }
+    await osmd.load(xml);
+    if (token !== staffToken) return;
+    osmd.Zoom = 1.05;
+    osmd.render();
+    indexStaff();
+    if (status) status.textContent = "播放时，高亮会跟着走到下一行。点「打印五线谱」可以存成 PDF。";
+    syncStaffCursor(currentTime());
+  } catch {
+    if (token !== staffToken) return;
+    osmd = null;
+    sheetTimes = [];
+    if (status) status.textContent = "这份五线谱没有画出来。可以先下载 MusicXML，用 MuseScore 打开。";
+  }
+}
+
+function refreshView() {
+  syncRoleButtons();
+  describeStem();
+  renderNoteTable();
+  renderDownloads();
+  applyStage();
+  paint(currentTime());
+  if (stageView === "staff") loadStaff();
 }
 
 function modeBlurb() {
@@ -709,10 +985,7 @@ function selectStem(stem) {
   document.querySelectorAll(".stem-tabs button").forEach((button) => {
     button.classList.toggle("on", button.dataset.stem === stem);
   });
-  describeStem();
-  renderNoteTable();
-  renderDownloads();
-  paint(currentTime());
+  refreshView();
   if (listenMode === "solo") restartIfPlaying();
 }
 
@@ -763,6 +1036,13 @@ function resetToDrop() {
   result = null;
   history.replaceState(null, "", "/");
   followPlayback = true;
+  noteRole = "both";
+  noteScope = "stem";
+  stageView = "roll";
+  osmd = null;
+  sheetTimes = [];
+  staffIndex = 0;
+  applyStage();
   syncTransport();
   show("drop");
 }
@@ -801,7 +1081,7 @@ document.querySelector("#follow").addEventListener("click", () => {
   syncTransport();
   if (result) paint(currentTime());
 });
-["#roll-scroll", ".table-scroll"].forEach((selector) => {
+["#roll-scroll", "#staff-scroll", ".table-scroll"].forEach((selector) => {
   const element = document.querySelector(selector);
   element.addEventListener("wheel", userScrolled, { passive: true });
   element.addEventListener("pointerdown", (event) => scrollbarGrabbed(element, event));
@@ -824,6 +1104,26 @@ document.querySelectorAll(".listen button").forEach((button) => {
     restartIfPlaying();
   });
 });
+document.querySelectorAll("[data-role]").forEach((button) => {
+  button.addEventListener("click", () => {
+    if (button.disabled) return;
+    noteRole = button.dataset.role;
+    refreshView();
+  });
+});
+document.querySelectorAll("[data-scope]").forEach((button) => {
+  button.addEventListener("click", () => {
+    noteScope = button.dataset.scope;
+    refreshView();
+  });
+});
+document.querySelectorAll("[data-view]").forEach((button) => {
+  button.addEventListener("click", () => {
+    stageView = button.dataset.view;
+    refreshView();
+  });
+});
+document.querySelector("#print-staff").addEventListener("click", () => window.print());
 document.querySelector("#again").addEventListener("click", resetToDrop);
 document.querySelector("#error-back").addEventListener("click", resetToDrop);
 window.addEventListener("keydown", (event) => {
@@ -840,6 +1140,14 @@ window.addEventListener("keydown", (event) => {
 window.addEventListener("resize", () => {
   if (!result) return;
   renderChords();
+  if (stageView === "staff" && osmd) {
+    try {
+      osmd.render();
+      indexStaff();
+    } catch {
+      /* keep the drawing already on screen */
+    }
+  }
   paint(currentTime());
 });
 

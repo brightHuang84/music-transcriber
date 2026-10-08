@@ -19,7 +19,9 @@ from app.audio_io import (
 from app.chords import detect_chords
 from app.drums import detect_drums
 from app.errors import UserFacingError
-from app.midi_export import write_combined_midi, write_stem_midi
+from app.melody import split_performance
+from app.midi_export import STEM_PROGRAM, STEM_TRACK, write_combined_midi, write_lead_midi, write_part_midi, write_stem_midi
+from app.notation import write_notation
 from app.rhythm import analyze_rhythm
 from app.separation import ensure_model, separate
 from app.stems import DEFAULT_MODE, label_for, mode_spec, pitched_names
@@ -154,12 +156,57 @@ def analyze(source: Path, work_dir: Path, progress, mode: str = DEFAULT_MODE) ->
         harmony_audio = harmony_audio + stem_audio[name]
     harmony = detect_chords(harmony_audio, model_rate, rhythm["beats"], length)
 
-    _report(progress, 96, "midi", "正在生成 MIDI…")
+    vocal_rms = float(rms(stem_audio["vocals"])) if "vocals" in stem_audio else 0.0
+    performance = split_performance(notes, vocal_rms=vocal_rms)
+    for stem, pack in performance["stems"].items():
+        notes[stem] = pack["notes"]
+
+    _report(progress, 96, "midi", "正在生成 MIDI 和五线谱…")
     midi_dir = work_dir / "midi"
     for stem in pitched:
         write_stem_midi(midi_dir / f"{stem}.mid", stem, bpm, notes=notes[stem])
+        if stem == "bass":
+            continue
+        program = STEM_PROGRAM[stem]
+        track = STEM_TRACK[stem]
+        write_part_midi(
+            midi_dir / f"{stem}_melody.mid",
+            bpm,
+            [note for note in notes[stem] if note.get("role") == "melody"],
+            program,
+            f"{track} Melody",
+        )
+        write_part_midi(
+            midi_dir / f"{stem}_harmony.mid",
+            bpm,
+            [note for note in notes[stem] if note.get("role") == "harmony"],
+            program,
+            f"{track} Harmony",
+        )
     write_stem_midi(midi_dir / "drums.mid", "drums", bpm, hits=hits)
     write_combined_midi(midi_dir / "all.mid", bpm, notes, hits)
+    write_part_midi(midi_dir / "melody.mid", bpm, performance["melody"], 73, "Melody")
+    write_part_midi(midi_dir / "harmony.mid", bpm, performance["harmony"], 0, "Harmony")
+    write_lead_midi(
+        midi_dir / "lead.mid",
+        bpm,
+        performance["melody"],
+        performance["harmony"],
+        notes.get("bass", []),
+        hits,
+    )
+    write_notation(
+        work_dir / "notation",
+        bpm=bpm,
+        time_signature=rhythm["time_signature"],
+        key=harmony["key"],
+        chords=harmony["chords"],
+        duration=length,
+        stems=notes,
+        melody=performance["melody"],
+        harmony=performance["harmony"],
+        hits=hits,
+    )
 
     result = {
         "filename": source.name,
@@ -173,6 +220,9 @@ def analyze(source: Path, work_dir: Path, progress, mode: str = DEFAULT_MODE) ->
         "downbeats": rhythm["downbeats"],
         "chords": harmony["chords"],
         "key": harmony["key"],
+        "melody": performance["melody"],
+        "harmony": performance["harmony"],
+        "melody_source": performance["melody_source"],
         "mix_peaks": waveform_peaks(mix),
         "stems": {},
     }

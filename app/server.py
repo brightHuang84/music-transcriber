@@ -256,6 +256,14 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="MIDI 还没准备好。")
         return FileResponse(path, media_type="audio/midi", filename=f"{stem}.mid")
 
+    @app.get("/api/jobs/{job_id}/musicxml/{name}")
+    def musicxml(job_id: str, name: str) -> FileResponse:
+        _safe_stem(name)
+        path = _job_dir(job_id) / "notation" / f"{name}.musicxml"
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="这份结果是旧的，请重新分析一次，才能看五线谱。")
+        return FileResponse(path, media_type="application/vnd.recordare.musicxml+xml", filename=f"{name}.musicxml")
+
     @app.get("/api/jobs/{job_id}/bundle")
     def bundle(job_id: str) -> FileResponse:
         folder = _job_dir(job_id)
@@ -267,6 +275,9 @@ def create_app() -> FastAPI:
             paths.extend(sorted(stems.glob("*.wav")))
         if midi.is_dir():
             paths.extend(sorted(midi.glob("*.mid")))
+        notation = folder / "notation"
+        if notation.is_dir():
+            paths.extend(sorted(notation.glob("*.musicxml")))
         with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as handle:
             for path in paths:
                 if path.exists():

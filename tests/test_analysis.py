@@ -453,3 +453,280 @@ def test_home_page_is_chinese():
     response = client.get("/")
     assert response.status_code == 200
     assert "听音识谱" in response.text
+    assert "五线谱" in response.text
+
+
+def _note(start, end, pitch, velocity=80):
+    return {
+        "start": start,
+        "end": end,
+        "pitch": pitch,
+        "velocity": velocity,
+        "name": "C4",
+        "solfege": "do",
+        "duration": round(end - start, 4),
+    }
+
+
+def test_extract_melody_keeps_the_top_line():
+    from app.melody import extract_melody
+
+    melody_line = [76, 79, 81, 79]
+    notes = []
+    for index, pitch in enumerate(melody_line):
+        start = index * 0.5
+        for chord in (60, 64, 67, pitch):
+            notes.append(_note(start, start + 0.45, chord))
+    melody, harmony = extract_melody(notes)
+    assert [note["pitch"] for note in melody] == melody_line
+    assert len(melody) + len(harmony) == len(notes)
+    assert all(note["pitch"] != 76 or note in melody for note in notes)
+
+
+def test_octave_leap_prefers_the_smoother_note():
+    from app.melody import extract_melody
+
+    notes = [
+        _note(0.0, 0.4, 72),
+        _note(0.5, 0.9, 84),
+        _note(0.51, 0.9, 74),
+    ]
+    melody, _harmony = extract_melody(notes)
+    assert [note["pitch"] for note in melody] == [72, 74]
+    wild = [
+        _note(0.0, 0.4, 72),
+        _note(0.5, 0.9, 84),
+        _note(0.5, 0.9, 60),
+    ]
+    assert [note["pitch"] for note in extract_melody(wild)[0]] == [72, 84]
+
+
+def test_bass_is_not_the_song_melody():
+    from app.melody import split_performance
+
+    piano = []
+    for index, pitch in enumerate((67, 69, 71, 72)):
+        start = index * 0.5
+        piano.append(_note(start, start + 0.45, pitch, 90))
+        piano.append(_note(start, start + 0.45, pitch - 12, 60))
+    performance = split_performance(
+        {
+            "bass": [_note(0.0, 1.0, 36), _note(1.0, 2.0, 43)],
+            "piano": piano,
+        },
+        vocal_rms=0.0,
+    )
+    assert all(note["role"] == "bass" for note in performance["stems"]["bass"]["notes"])
+    assert performance["stems"]["bass"]["melody"] == []
+    song = performance["melody"] + performance["harmony"]
+    assert song
+    assert all(note["pitch"] >= 48 for note in song)
+    assert all(note.get("source") != "bass" for note in song)
+
+
+def test_quiet_vocals_do_not_become_the_song_melody():
+    from app.melody import split_performance
+
+    vocals = [_note(index * 0.5, index * 0.5 + 0.4, 84) for index in range(10)]
+    piano = []
+    for index in range(10):
+        start = index * 0.5
+        piano.append(_note(start, start + 0.4, 76, 90))
+        piano.append(_note(start, start + 0.4, 60, 50))
+        piano.append(_note(start, start + 0.4, 64, 50))
+    performance = split_performance({"vocals": vocals, "piano": piano}, vocal_rms=0.006)
+    assert performance["melody_source"] == "skyline"
+    assert [note["pitch"] for note in performance["melody"]] == [76] * 10
+    assert all(note.get("source") != "vocals" for note in performance["melody"] + performance["harmony"])
+    # The vocal stem still has its own line, for the 人声 tab.
+    assert len(performance["stems"]["vocals"]["melody"]) == 10
+
+
+def test_clear_vocals_are_the_song_melody():
+    from app.melody import split_performance
+
+    vocals = [_note(index * 0.5, index * 0.5 + 0.4, 72 + (index % 3)) for index in range(8)]
+    piano = [_note(index * 0.5, index * 0.5 + 0.4, 60) for index in range(8)]
+    performance = split_performance({"vocals": vocals, "piano": piano}, vocal_rms=0.05)
+    assert performance["melody_source"] == "vocals"
+    assert [note["pitch"] for note in performance["melody"]] == [note["pitch"] for note in vocals]
+    assert all(note["source"] == "vocals" for note in performance["melody"])
+    assert any(note["source"] == "piano" for note in performance["harmony"])
+    assert all(not (note["source"] == "vocals" and note["role"] == "melody") for note in performance["harmony"])
+
+
+def test_musicxml_is_quantized_in_the_key():
+    import xml.etree.ElementTree as ET
+
+    from app.notation import build_musicxml
+
+    notes = [
+        _note(0.0, 0.5, 67),
+        _note(0.5, 1.0, 70),
+        _note(1.5, 2.2, 64),
+        _note(3.0, 3.03, 72),
+    ]
+    for note in notes:
+        note["role"] = "melody"
+    xml = build_musicxml(
+        [{"name": "旋律", "notes": notes, "clef": "treble", "program": 73}],
+        bpm=120,
+        time_signature="4/4",
+        key={"tonic": "G", "mode": "minor", "name": "G 小调"},
+        chords=[{"start": 0.0, "end": 2.0, "symbol": "Gm"}],
+        duration=4.0,
+    )
+    assert "32nd" not in xml
+    assert "64th" not in xml
+    root = ET.fromstring(xml)
+    fifths = root.find("./part/measure/attributes/key/fifths")
+    assert fifths is not None and fifths.text == "-2"
+    beats = root.find("./part/measure/attributes/time/beats")
+    assert beats is not None and beats.text == "4"
+    sign = root.find("./part/measure/attributes/clef/sign")
+    assert sign is not None and sign.text == "G"
+    kinds = [item.text for item in root.findall(".//kind")]
+    assert "minor" in kinds
+    # A# is spelled Bb, which the key signature already covers, so it is not reprinted.
+    alters = [item.text for item in root.findall(".//pitch/alter")]
+    assert "-1" in alters
+    assert any(item.text == "natural" for item in root.findall(".//accidental"))
+    assert any(item.get("type") == "start" for item in root.findall(".//tied"))
+
+
+def test_piano_grand_staff_and_drum_clef():
+    import xml.etree.ElementTree as ET
+
+    from app.notation import build_musicxml
+
+    piano = build_musicxml(
+        [{
+            "name": "钢琴",
+            "clef": "grand",
+            "program": 0,
+            "notes": [_note(0.0, 0.5, 48, 70), _note(0.0, 0.5, 72, 90)],
+        }],
+        bpm=120,
+        key={"tonic": "C", "mode": "major"},
+        chords=[{"start": 0.0, "end": 1.0, "symbol": "C"}],
+        duration=2.0,
+    )
+    assert "<staves>2</staves>" in piano
+    assert piano.count("<sign>G</sign>") == 1
+    assert "<sign>F</sign>" in piano
+    root = ET.fromstring(piano)
+    staves = [item.text for item in root.findall(".//staff")]
+    assert "1" in staves and "2" in staves
+    drums = build_musicxml(
+        [{"name": "鼓", "clef": "percussion", "hits": [
+            {"time": 0.0, "kind": "kick", "velocity": 100},
+            {"time": 0.0, "kind": "hat_closed", "velocity": 70},
+            {"time": 0.5, "kind": "snare", "velocity": 90},
+        ]}],
+        bpm=120,
+        duration=2.0,
+    )
+    assert "<sign>percussion</sign>" in drums
+    assert "<notehead>x</notehead>" in drums
+    assert "32nd" not in drums and "64th" not in drums
+
+
+def test_melody_midi_is_separate_from_the_stems(tmp_path: Path):
+    from app.midi_export import write_combined_midi, write_lead_midi, write_part_midi
+
+    melody = [_note(0.0, 0.4, 76)]
+    harmony = [_note(0.0, 0.4, 60), _note(0.0, 0.4, 64)]
+    bass = [_note(0.0, 0.4, 36)]
+    hits = [{"time": 0.0, "kind": "kick", "velocity": 100}]
+    write_part_midi(tmp_path / "melody.mid", 120, melody, 73, "Melody")
+    write_part_midi(tmp_path / "harmony.mid", 120, harmony, 0, "Harmony")
+    write_lead_midi(tmp_path / "lead.mid", 120, melody, harmony, bass, hits)
+    write_combined_midi(tmp_path / "all.mid", 120, {"piano": melody, "bass": bass}, hits)
+    melody_midi = pretty_midi.PrettyMIDI(str(tmp_path / "melody.mid"))
+    assert melody_midi.instruments[0].program == 73
+    assert melody_midi.instruments[0].name == "Melody"
+    assert [note.pitch for note in melody_midi.instruments[0].notes] == [76]
+    harmony_midi = pretty_midi.PrettyMIDI(str(tmp_path / "harmony.mid"))
+    assert harmony_midi.instruments[0].program == 0
+    lead = pretty_midi.PrettyMIDI(str(tmp_path / "lead.mid"))
+    names = {instrument.name for instrument in lead.instruments}
+    assert {"Melody", "Harmony", "Bass", "Drums"} <= names
+    combined = {instrument.name for instrument in pretty_midi.PrettyMIDI(str(tmp_path / "all.mid")).instruments}
+    assert "Melody" not in combined
+    assert "Harmony" not in combined
+
+
+def test_known_lead_sheet_notes_extract_exactly():
+    from app.melody import extract_melody
+    from app.synth import synthesize_lead_sheet
+
+    clip = synthesize_lead_sheet()
+    notes = []
+    for start, end, pitches in clip["chords"]:
+        for pitch in pitches:
+            notes.append(_note(start, end, pitch, 60))
+    for start, end, pitch in clip["melody"]:
+        notes.append(_note(start, end, pitch, 100))
+    melody, _harmony = extract_melody(notes)
+    assert [note["pitch"] for note in melody] == [pitch for _start, _end, pitch in clip["melody"]]
+
+
+def test_musicxml_route_explains_an_old_result(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("MUSIC_ANALYZER_DATA", str(tmp_path))
+    client = TestClient(app)
+    folder = tmp_path / "jobs" / "abc123"
+    folder.mkdir(parents=True)
+    missing = client.get("/api/jobs/abc123/musicxml/song")
+    assert missing.status_code == 404
+    assert "重新分析" in missing.json()["detail"]
+    (folder / "notation").mkdir()
+    (folder / "notation" / "song.musicxml").write_text("<score-partwise/>", encoding="utf-8")
+    found = client.get("/api/jobs/abc123/musicxml/song")
+    assert found.status_code == 200
+    assert b"score-partwise" in found.content
+
+
+def test_lead_sheet_melody_matches_the_written_line(tmp_path: Path):
+    from app.melody import split_performance
+    from app.notation import build_musicxml
+    from app.synth import synthesize_lead_sheet
+
+    clip = synthesize_lead_sheet(tmp_path / "lead.wav")
+    notes = transcribe(tmp_path / "lead.wav", "piano", midi_tempo=120)
+    performance = split_performance({"piano": notes}, vocal_rms=0.0)
+    melody = performance["melody"]
+
+    def matched(expected, pool):
+        used = set()
+        hits = 0
+        for start, _end, pitch in expected:
+            for index, note in enumerate(pool):
+                if index in used:
+                    continue
+                if note["pitch"] == pitch and abs(note["start"] - start) <= 0.2:
+                    used.add(index)
+                    hits += 1
+                    break
+        return hits
+
+    expected = clip["melody"]
+    recall = matched(expected, melody) / len(expected)
+    precision_hits = matched([(note["start"], note["end"], note["pitch"]) for note in melody], [
+        {"start": start, "end": end, "pitch": pitch} for start, end, pitch in expected
+    ])
+    # matched() expects pool items with pitch/start. The second call swaps roles:
+    # each extracted note must land on a written melody note.
+    precision = precision_hits / max(1, len(melody))
+    assert recall >= 0.7, (recall, melody, expected)
+    assert precision >= 0.7, (precision, melody, expected)
+    xml = build_musicxml(
+        [{"name": "旋律", "notes": melody, "clef": "treble", "program": 73}],
+        bpm=120,
+        time_signature="4/4",
+        key={"tonic": "C", "mode": "major"},
+        chords=[{"start": 0.3, "end": 2.2, "symbol": "C"}],
+        duration=clip["duration"],
+    )
+    assert "32nd" not in xml and "64th" not in xml
+    assert "<sign>G</sign>" in xml
+    assert "<kind" in xml
