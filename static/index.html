@@ -15,11 +15,28 @@
         <h1>听音识谱</h1>
       </div>
     </div>
-    <p class="lede">放入一首歌，它会把人声、鼓、贝斯和其他乐器分开，并告诉你每个音叫什么、节奏落在哪里。</p>
+    <p class="lede">放入一首歌，它会把人声、鼓、贝斯分开，也能再拆出钢琴和吉他，并告诉你每个音叫什么、节奏落在哪里。</p>
   </header>
 
   <main>
     <section id="drop-view" class="panel">
+      <fieldset class="mode-picker">
+        <legend>怎么分轨</legend>
+        <label class="mode-option">
+          <input type="radio" name="mode" value="fine" checked />
+          <span>
+            <strong>精细</strong>
+            <small>在人声、鼓、贝斯之外，再单独分出钢琴和吉他。第一次大约再下载 55MB。一首大约 3 分钟的歌，在没有独显的电脑上两种都是一分多钟，精细不会更慢。小提琴、大提琴、管乐、铜管和合成器仍在「其他乐器」里：目前没有能在普通电脑上自动下载、又比较准的开源模型把它们单独拆开。</small>
+          </span>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="mode" value="fast" />
+          <span>
+            <strong>快速</strong>
+            <small>只分人声、鼓、贝斯、其他乐器。鼓和贝斯通常更干净，钢琴和吉他会留在「其他乐器」。模型大约 84MB，以前分析过歌的电脑一般已经有了，不用再下载。</small>
+          </span>
+        </label>
+      </fieldset>
       <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="选择歌曲文件">
         <svg viewBox="0 0 80 64" class="drop-art" aria-hidden="true">
           <rect x="4" y="18" width="18" height="28" rx="4" />
@@ -28,7 +45,7 @@
         </svg>
         <h2>把歌曲拖到这里</h2>
         <p>也可以点击选择。支持 mp3、wav、m4a、flac。</p>
-        <p class="hint">第一次分析会下载模型，普通电脑处理一首歌大约要几分钟。</p>
+        <p class="hint">第一次用某种分轨方式时会下载模型，窗口里能看到下载进度。普通电脑处理一首歌大约要几分钟。</p>
         <button type="button" class="primary" id="pick-file">选择歌曲</button>
         <input id="file-input" type="file" accept=".mp3,.wav,.m4a,.flac,audio/mpeg,audio/wav,audio/mp4,audio/flac" hidden />
       </div>
@@ -45,6 +62,7 @@
       <p class="percent" id="progress-percent">0%</p>
       <ol class="steps" id="step-list">
         <li data-step="read">读取音频</li>
+        <li data-step="download">下载模型</li>
         <li data-step="separate">分离音轨</li>
         <li data-step="rhythm">速度与节拍</li>
         <li data-step="notes">识别音高</li>
@@ -66,6 +84,7 @@
         <div>
           <p class="kicker" id="song-name"></p>
           <h2>分析结果</h2>
+          <p class="hint" id="mode-readout"></p>
         </div>
         <button type="button" class="ghost" id="again">分析另一首</button>
       </div>
@@ -107,16 +126,11 @@
         <div class="listen" role="group" aria-label="听哪一条">
           <button type="button" data-listen="mix" class="on">原曲</button>
           <button type="button" data-listen="solo">只听当前乐器</button>
-          <button type="button" data-listen="all">四轨一起</button>
+          <button type="button" data-listen="all">有声音的轨一起</button>
         </div>
       </div>
 
-      <div class="stem-tabs" role="tablist" aria-label="乐器">
-        <button type="button" role="tab" data-stem="vocals" class="on">人声</button>
-        <button type="button" role="tab" data-stem="drums">鼓</button>
-        <button type="button" role="tab" data-stem="bass">贝斯</button>
-        <button type="button" role="tab" data-stem="other">其他乐器</button>
-      </div>
+      <div class="stem-tabs" role="tablist" aria-label="乐器"></div>
       <p class="stem-note" id="stem-note"></p>
 
       <div class="stage panel">
@@ -168,6 +182,7 @@
           <li>唱名 <b>do re mi fa sol la si</b> 对应 C D E F G A B。带 # 的是升号，比如 #fa 就是 F#。</li>
           <li>鼓的每一行是一种鼓。<b>底鼓</b>常在强拍，<b>军鼓</b>常在第 2、第 4 拍，<b>闭镲</b>打得密，<b>开镲</b>会响得更长。<b>叮叮镲</b>是节奏镲，<b>吊镲</b>是重音。<b>高通鼓</b>、<b>中通鼓</b>、<b>落地通鼓</b>音高从高到低。</li>
           <li>竖线是拍子，更重的线是小节的第一拍。圆点会跟着拍子亮一下。</li>
+          <li>精细模式会多出钢琴和吉他。变灰的按钮是这首歌里几乎没有声音的轨，点开也能看。小提琴、大提琴、管乐和合成器目前算在「其他乐器」里。</li>
           <li>和弦和调性是估计的，只标大和弦、小和弦，复杂的歌会不准。识谱也会有错音，把它当成学习的起点就好。</li>
         </ul>
       </section>
@@ -177,6 +192,6 @@
   <footer>
     <p>歌曲只在这台电脑上处理，不会上传到网上。</p>
   </footer>
-  <script src="/app.js?v=3"></script>
+  <script src="/app.js?v=4"></script>
 </body>
 </html>

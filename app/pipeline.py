@@ -21,15 +21,17 @@ from app.drums import detect_drums
 from app.errors import UserFacingError
 from app.midi_export import write_combined_midi, write_stem_midi
 from app.rhythm import analyze_rhythm
-from app.separation import separate
+from app.separation import ensure_model, separate
+from app.stems import DEFAULT_MODE, label_for, mode_spec, pitched_names
 from app.transcription import transcribe
 
 logger = logging.getLogger(__name__)
 
 MAX_DURATION_SECONDS = 10 * 60
 MIN_DURATION_SECONDS = 2.0
-PITCHED_STEMS = ("vocals", "bass", "other")
-ALL_STEMS = ("vocals", "drums", "bass", "other")
+# Below this, a stem is treated as empty: no notes, and the tab is grey.
+# 0.001 still left a film-score vocal stem that was only a little bleed.
+QUIET_RMS = 0.003
 
 
 def _report(progress, percent: float, step: str, message: str) -> None:
@@ -41,8 +43,14 @@ def _tensor_to_numpy(tensor) -> np.ndarray:
     return np.asarray(array, dtype=np.float32)
 
 
-def analyze(source: Path, work_dir: Path, progress) -> dict:
-    """Analyze one song. `progress(percent, step, message)` is called along the way."""
+def analyze(source: Path, work_dir: Path, progress, mode: str = DEFAULT_MODE) -> dict:
+    """Analyze one song. `progress(percent, step, message)` is called along the way.
+
+    `mode` is "fast" (vocals, drums, bass, other) or "fine" (those plus guitar and piano).
+    """
+    spec = mode_spec(mode)
+    stem_names = tuple(spec["stems"])
+    pitched = pitched_names(stem_names)
     work_dir.mkdir(parents=True, exist_ok=True)
     _report(progress, 3, "read", "正在读取音频…")
     mix_path = work_dir / "mix.wav"
@@ -58,20 +66,35 @@ def analyze(source: Path, work_dir: Path, progress) -> dict:
     if rms(mix) < 1e-4:
         raise UserFacingError("这个文件几乎没有声音。请换一首歌试试。")
 
-    _report(progress, 8, "separate", "正在把歌曲分成 人声、鼓、贝斯、其他乐器。这一步最慢，请稍等…")
+    names = "、".join(label_for(name) for name in stem_names)
+    _report(progress, 6, "download", f"正在准备{spec['label']}模型…")
+
+    def on_download(fraction: float, message: str) -> None:
+        _report(progress, 6 + 10 * fraction, "download", message)
+
+    # Download before the separation ticker, so the window shows bytes arriving
+    # instead of a frozen "separating" line.
+    ensure_model(spec["model"], on_progress=on_download)
+
+    _report(
+        progress,
+        17,
+        "separate",
+        f"正在把歌曲分成 {names}。这一步最慢，请稍等…",
+    )
     # The separator often reports progress only when a chunk finishes. A slow
     # ticker keeps the page from looking frozen on CPU.
     stop_ticker = threading.Event()
 
     def _tick() -> None:
-        percent = 12.0
+        percent = 20.0
         while not stop_ticker.wait(1.5):
-            percent = min(40.0, percent + 2.0)
+            percent = min(44.0, percent + 1.5)
             _report(
                 progress,
                 percent,
                 "separate",
-                "正在分离音轨…普通电脑会慢一些，页面可以开着，不用反复点击。",
+                f"正在分离音轨（{spec['label']}）…普通电脑会慢一些，页面可以开着，不用反复点击。",
             )
 
     ticker = threading.Thread(target=_tick, daemon=True)
@@ -85,13 +108,13 @@ def analyze(source: Path, work_dir: Path, progress) -> dict:
         fraction = min(1.0, max(0.0, offset / audio_length))
         _report(
             progress,
-            10 + 32 * fraction,
+            18 + 28 * fraction,
             "separate",
-            "正在分离音轨…普通电脑会慢一些，页面可以开着，不用反复点击。",
+            f"正在分离音轨（{spec['label']}）…普通电脑会慢一些，页面可以开着，不用反复点击。",
         )
 
     try:
-        stem_tensors, model_rate = separate(mix_path, on_chunk=on_chunk)
+        stem_tensors, model_rate = separate(mix_path, mode=spec["id"], on_chunk=on_chunk)
     finally:
         stop_ticker.set()
     if sample_rate != model_rate:
@@ -102,22 +125,22 @@ def analyze(source: Path, work_dir: Path, progress) -> dict:
         length = duration_seconds(mix, sample_rate)
     stem_audio: dict[str, np.ndarray] = {}
     stem_dir = work_dir / "stems"
-    for name in ALL_STEMS:
+    for name in stem_names:
         if name not in stem_tensors:
             raise UserFacingError("分离结果不完整，没有得到全部音轨。请重试一次。")
         audio = _tensor_to_numpy(stem_tensors[name])
         stem_audio[name] = audio
         save_wav(stem_dir / f"{name}.wav", audio, model_rate)
 
-    _report(progress, 46, "rhythm", "正在听速度和节拍…")
+    _report(progress, 48, "rhythm", "正在听速度和节拍…")
     rhythm = analyze_rhythm(mix, stem_audio["drums"], model_rate)
     bpm = float(rhythm["bpm"])
 
     notes: dict[str, list] = {}
-    note_steps = (("vocals", 55, "正在识别人声的音高…"), ("bass", 66, "正在识别贝斯的音高…"), ("other", 77, "正在识别其他乐器的音高…"))
-    for stem, percent, message in note_steps:
-        _report(progress, percent, "notes", message)
-        if rms(stem_audio[stem]) < 1e-3:
+    for index, stem in enumerate(pitched):
+        percent = 54 + int(28 * index / max(1, len(pitched)))
+        _report(progress, percent, "notes", f"正在识别{label_for(stem)}的音高…")
+        if rms(stem_audio[stem]) < QUIET_RMS:
             notes[stem] = []
             continue
         notes[stem] = transcribe(stem_dir / f"{stem}.wav", stem, midi_tempo=bpm)
@@ -126,12 +149,14 @@ def analyze(source: Path, work_dir: Path, progress) -> dict:
     hits = detect_drums(stem_audio["drums"], model_rate) if rms(stem_audio["drums"]) >= 1e-4 else []
 
     _report(progress, 92, "chords", "正在估计和弦…")
-    pitched = stem_audio["vocals"] + stem_audio["bass"] + stem_audio["other"]
-    harmony = detect_chords(pitched, model_rate, rhythm["beats"], length)
+    harmony_audio = stem_audio[pitched[0]]
+    for name in pitched[1:]:
+        harmony_audio = harmony_audio + stem_audio[name]
+    harmony = detect_chords(harmony_audio, model_rate, rhythm["beats"], length)
 
     _report(progress, 96, "midi", "正在生成 MIDI…")
     midi_dir = work_dir / "midi"
-    for stem in PITCHED_STEMS:
+    for stem in pitched:
         write_stem_midi(midi_dir / f"{stem}.mid", stem, bpm, notes=notes[stem])
     write_stem_midi(midi_dir / "drums.mid", "drums", bpm, hits=hits)
     write_combined_midi(midi_dir / "all.mid", bpm, notes, hits)
@@ -140,6 +165,8 @@ def analyze(source: Path, work_dir: Path, progress) -> dict:
         "filename": source.name,
         "duration": round(length, 3),
         "sample_rate": model_rate,
+        "mode": spec["id"],
+        "mode_label": spec["label"],
         "bpm": rhythm["bpm"],
         "time_signature": rhythm["time_signature"],
         "beats": rhythm["beats"],
@@ -149,10 +176,10 @@ def analyze(source: Path, work_dir: Path, progress) -> dict:
         "mix_peaks": waveform_peaks(mix),
         "stems": {},
     }
-    for stem in ALL_STEMS:
+    for stem in stem_names:
         entry = {
             "rms": round(rms(stem_audio[stem]), 5),
-            "silent": rms(stem_audio[stem]) < 1e-3,
+            "silent": rms(stem_audio[stem]) < QUIET_RMS,
             "peaks": waveform_peaks(stem_audio[stem]),
         }
         if stem == "drums":
@@ -166,7 +193,7 @@ def analyze(source: Path, work_dir: Path, progress) -> dict:
         source.name,
         length,
         bpm,
-        {stem: len(notes[stem]) for stem in PITCHED_STEMS},
+        {stem: len(notes[stem]) for stem in pitched},
         len(hits),
     )
     return result

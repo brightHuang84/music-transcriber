@@ -2,8 +2,12 @@ const STEMS = {
   vocals: { label: "人声", en: "Vocals", pitched: true, color: "#d4534a" },
   drums: { label: "鼓", en: "Drums", pitched: false, color: "#c4892a" },
   bass: { label: "贝斯", en: "Bass", pitched: true, color: "#2d6d9a" },
+  guitar: { label: "吉他", en: "Guitar", pitched: true, color: "#7a4e8a" },
+  piano: { label: "钢琴", en: "Piano", pitched: true, color: "#3c5aa0" },
   other: { label: "其他乐器", en: "Other", pitched: true, color: "#3d8b6e" },
 };
+
+const STEM_ORDER = ["vocals", "drums", "bass", "guitar", "piano", "other"];
 
 const DRUM_ROWS = [
   { kind: "crash", label: "吊镲", en: "Crash" },
@@ -17,7 +21,7 @@ const DRUM_ROWS = [
   { kind: "kick", label: "底鼓", en: "Kick" },
 ];
 
-const STEP_ORDER = ["read", "separate", "rhythm", "notes", "drums", "chords", "midi", "done"];
+const STEP_ORDER = ["read", "download", "separate", "rhythm", "notes", "drums", "chords", "midi", "done"];
 
 const dropView = document.querySelector("#drop-view");
 const progressView = document.querySelector("#progress-view");
@@ -78,6 +82,7 @@ async function upload(file) {
   }
   const body = new FormData();
   body.append("file", file);
+  body.append("mode", selectedMode());
   showProgress(file.name, { status: "queued", progress: 0, step: "read", message: "正在上传…" });
   let response;
   try {
@@ -99,7 +104,7 @@ async function startDemo() {
   showProgress("示例音乐.wav", { status: "queued", progress: 0, step: "read", message: "正在准备示例…" });
   let response;
   try {
-    response = await fetch("/api/demo", { method: "POST" });
+    response = await fetch(`/api/demo?mode=${encodeURIComponent(selectedMode())}`, { method: "POST" });
   } catch {
     showError("连不上本机程序。请关掉听音识谱，再从应用程序菜单重新打开。");
     return;
@@ -284,9 +289,23 @@ function currentTime() {
   return Math.min(result.duration, Math.max(0, pauseOffset + elapsed));
 }
 
+function stemNames() {
+  const present = result && result.stems ? Object.keys(result.stems) : [];
+  return STEM_ORDER.filter((name) => present.includes(name));
+}
+
+function selectedMode() {
+  const picked = document.querySelector('input[name="mode"]:checked');
+  const mode = picked ? picked.value : "fine";
+  try { localStorage.setItem("tingyin-mode", mode); } catch { /* private mode */ }
+  return mode;
+}
+
 function audibleNames() {
   if (listenMode === "mix") return ["mix"];
-  if (listenMode === "all") return ["vocals", "drums", "bass", "other"];
+  if (listenMode === "all") {
+    return stemNames().filter((name) => result.stems[name] && !result.stems[name].silent);
+  }
   return [viewStem];
 }
 
@@ -657,8 +676,32 @@ function describeStem() {
   hint.textContent = listenMode === "solo"
     ? `正在只听${meta.label}。`
     : listenMode === "all"
-      ? "正在把四条音轨合在一起听。"
+      ? "正在把有声音的音轨合在一起听。几乎没声音的轨不会加进来。"
       : `正在听原曲，画面是${meta.label}。`;
+}
+
+function modeBlurb() {
+  if (result && result.mode === "fine") {
+    return "这次用的是精细。钢琴和吉他单独成轨。小提琴、大提琴、管乐、铜管和合成器如果有，会留在「其他乐器」。变灰的是这首歌里几乎没声音的轨。";
+  }
+  return "这次用的是快速。音轨是人声、鼓、贝斯和其他乐器。钢琴和吉他算在「其他乐器」里。";
+}
+
+function renderStemTabs() {
+  const bar = document.querySelector(".stem-tabs");
+  bar.innerHTML = "";
+  stemNames().forEach((name) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.role = "tab";
+    button.dataset.stem = name;
+    button.textContent = STEMS[name].label;
+    const silent = Boolean(result.stems[name].silent);
+    button.classList.toggle("quiet", silent);
+    button.title = silent ? "这一轨几乎没有声音" : STEMS[name].en;
+    button.addEventListener("click", () => selectStem(name));
+    bar.appendChild(button);
+  });
 }
 
 function selectStem(stem) {
@@ -675,7 +718,7 @@ function selectStem(stem) {
 
 async function loadBuffers(id) {
   audioCtx = audioCtx || new AudioContext();
-  const names = ["mix", "vocals", "drums", "bass", "other"];
+  const names = ["mix", ...stemNames()];
   await Promise.all(names.map(async (name) => {
     const response = await fetch(`/api/jobs/${id}/audio/${name}`);
     if (!response.ok) throw new Error(name);
@@ -689,13 +732,16 @@ async function present(data) {
   job = data;
   show("result");
   document.querySelector("#song-name").textContent = result.filename || data.filename || "";
+  document.querySelector("#mode-readout").textContent = modeBlurb();
   document.querySelector("#bpm-readout").textContent = `${result.bpm} BPM`;
   document.querySelector("#key-readout").textContent = result.key ? result.key.name : "不确定";
   document.querySelector("#time-total").textContent = formatTime(result.duration);
-  const pitched = ["vocals", "bass", "other"]
-    .filter((name) => (result.stems[name].notes || []).length)
+  renderStemTabs();
+  const pitched = stemNames()
+    .filter((name) => STEMS[name].pitched && !result.stems[name].silent && (result.stems[name].notes || []).length)
     .sort((a, b) => result.stems[b].notes.length - result.stems[a].notes.length);
-  viewStem = pitched[0] || ((result.stems.drums.hits || []).length ? "drums" : "vocals");
+  const drums = result.stems.drums;
+  viewStem = pitched[0] || (drums && (drums.hits || []).length ? "drums" : stemNames()[0]);
   listenMode = "mix";
   document.querySelectorAll(".listen button").forEach((button) => {
     button.classList.toggle("on", button.dataset.listen === "mix");
@@ -770,9 +816,6 @@ document.querySelector("#roll-scroll").addEventListener("click", (event) => {
   const rect = document.querySelector("#roll-inner").getBoundingClientRect();
   seek((event.clientX - rect.left) / pxPerSec);
 });
-document.querySelectorAll(".stem-tabs button").forEach((button) => {
-  button.addEventListener("click", () => selectStem(button.dataset.stem));
-});
 document.querySelectorAll(".listen button").forEach((button) => {
   button.addEventListener("click", () => {
     listenMode = button.dataset.listen;
@@ -798,6 +841,15 @@ window.addEventListener("resize", () => {
   if (!result) return;
   renderChords();
   paint(currentTime());
+});
+
+try {
+  const savedMode = localStorage.getItem("tingyin-mode");
+  const saved = savedMode && document.querySelector(`input[name="mode"][value="${savedMode}"]`);
+  if (saved) saved.checked = true;
+} catch { /* private mode */ }
+document.querySelectorAll('input[name="mode"]').forEach((input) => {
+  input.addEventListener("change", selectedMode);
 });
 
 const params = new URLSearchParams(location.search);

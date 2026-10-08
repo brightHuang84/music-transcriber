@@ -10,6 +10,8 @@
   --drums: #c4892a;
   --bass: #2d6d9a;
   --other: #3d8b6e;
+  --guitar: #7a4e8a;
+  --piano: #3c5aa0;
   --shadow: 0 16px 40px rgba(60, 36, 16, 0.08);
   color-scheme: light;
 }
@@ -110,6 +112,37 @@ main { display: grid; gap: 16px; padding-bottom: 28px; }
 .drop-art rect { fill: none; stroke: var(--ink); stroke-width: 3; }
 
 .hint { color: var(--muted); font-size: 14px; }
+
+.mode-picker {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  margin: 0 0 16px;
+  padding: 10px 14px 6px;
+  background: var(--card);
+}
+
+.mode-picker legend {
+  padding: 0 6px;
+  color: var(--muted);
+}
+
+.mode-option {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 2px;
+  cursor: pointer;
+}
+
+.mode-option input { margin-top: 4px; }
+
+.mode-option strong { display: block; }
+
+.mode-option small {
+  display: block;
+  color: var(--muted);
+  line-height: 1.45;
+}
 
 .primary, .ghost, .play, .stem-tabs button, .listen button {
   border-radius: 999px;
@@ -262,6 +295,9 @@ main { display: grid; gap: 16px; padding-bottom: 28px; }
 .stem-tabs button[data-stem="drums"].on { background: var(--drums); border-color: var(--drums); }
 .stem-tabs button[data-stem="bass"].on { background: var(--bass); border-color: var(--bass); }
 .stem-tabs button[data-stem="other"].on { background: var(--other); border-color: var(--other); }
+.stem-tabs button[data-stem="guitar"].on { background: var(--guitar); border-color: var(--guitar); }
+.stem-tabs button[data-stem="piano"].on { background: var(--piano); border-color: var(--piano); }
+.stem-tabs button.quiet { opacity: 0.42; }
 
 .stem-note { margin: 0; color: var(--muted); }
 

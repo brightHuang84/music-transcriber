@@ -7,23 +7,14 @@ from pathlib import Path
 import pretty_midi
 
 from app.drums import DRUM_MIDI
+from app.stems import STEMS, pitched_names
 
 DRUM_PITCH = dict(DRUM_MIDI)
 
-# General MIDI programs. Piano and bass are easy to recognize when a beginner
-# opens the file in MuseScore or a DAW. Track names stay ASCII so strict MIDI
-# readers do not reject them.
-STEM_PROGRAM = {
-    "vocals": 0,  # Acoustic Grand Piano
-    "bass": 33,  # Electric Bass (finger)
-    "other": 48,  # String Ensemble
-}
-STEM_TRACK = {
-    "vocals": "Vocals",
-    "bass": "Bass",
-    "other": "Other",
-    "drums": "Drums",
-}
+# General MIDI programs. Track names stay ASCII so strict MIDI readers do not
+# reject them. Vocals are Voice Oohs (53), not piano, once a real piano track exists.
+STEM_PROGRAM = {name: int(meta["program"]) for name, meta in STEMS.items() if meta["pitched"]}
+STEM_TRACK = {name: str(meta["track"]) for name, meta in STEMS.items()}
 
 
 def _new_midi(bpm: float) -> pretty_midi.PrettyMIDI:
@@ -80,7 +71,7 @@ def write_combined_midi(
     hits: list[dict],
 ) -> None:
     midi = _new_midi(bpm)
-    for stem in ("vocals", "bass", "other"):
+    for stem in pitched_names(tuple(notes_by_stem)):
         midi.instruments.append(_pitched_instrument(stem, notes_by_stem.get(stem, [])))
     midi.instruments.append(_drum_instrument(hits))
     path.parent.mkdir(parents=True, exist_ok=True)
