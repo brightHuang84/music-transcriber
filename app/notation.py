@@ -89,7 +89,7 @@ def clef_for(kind: str, notes: list[dict]) -> str:
         return "treble"
     low, high = pitches[0], pitches[-1]
     median = pitches[len(pitches) // 2]
-    if base in {"other", "harmony", "melody"} and low < 55 and high >= 65:
+    if base in {"other", "strings", "harmony", "melody"} and low < 55 and high >= 65:
         return "grand"
     if median < 55:
         return "bass"

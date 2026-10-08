@@ -1,8 +1,9 @@
 """Instrument names shared by separation, MIDI, and the window.
 
-Demucs htdemucs (快速) returns four stems. htdemucs_6s (精细) adds guitar and
-piano. Violin, cello, winds, brass, and synth are not stems of either model;
-they stay inside 「其他乐器」.
+快速 is Demucs htdemucs (four stems). 精细 is htdemucs_6s, which also splits
+piano and guitar. 最高质量 uses BS-RoFormer for drums, bass, piano, and
+guitar, htdemucs_6s for vocals, and a bowed-strings model for 弦乐. Winds,
+brass, and synth stay inside 「其他乐器」.
 """
 
 from __future__ import annotations
@@ -17,38 +18,57 @@ STEMS: dict[str, dict] = {
     "bass": {"label": "贝斯", "en": "Bass", "track": "Bass", "program": 33, "pitched": True},
     "guitar": {"label": "吉他", "en": "Guitar", "track": "Guitar", "program": 25, "pitched": True},
     "piano": {"label": "钢琴", "en": "Piano", "track": "Piano", "program": 0, "pitched": True},
+    # String Ensemble, same program as 「其他乐器」. In 最高质量 the bowed
+    # parts live here; the leftover track keeps 48 so 精细, where violin is
+    # still inside 「其他乐器」, does not change sound.
+    "strings": {"label": "弦乐", "en": "Strings", "track": "Strings", "program": 48, "pitched": True},
     "other": {"label": "其他乐器", "en": "Other", "track": "Other", "program": 48, "pitched": True},
 }
 
 # Shown in the window from left to right.
-STEM_ORDER = ("vocals", "drums", "bass", "guitar", "piano", "other")
+STEM_ORDER = ("vocals", "drums", "bass", "guitar", "piano", "strings", "other")
 
-# Download sizes are the Hugging Face safetensors files, measured in MB (1e6 bytes).
+# Download sizes are the weight files, measured in MB (1e6 bytes).
+# 最高质量 is the six-stem RoFormer (699) plus bowed strings (303) plus the
+# drum-kit model (438). htdemucs_6s (55MB) is also used for vocals.
 MODES: dict[str, dict] = {
-    "fast": {
-        "id": "fast",
-        "label": "快速",
-        "model": "htdemucs",
-        "stems": ("vocals", "drums", "bass", "other"),
-        "download_mb": 84,
+    "best": {
+        "id": "best",
+        "label": "最高质量",
+        "model": "quality",
+        "engine": "quality",
+        "stems": ("vocals", "drums", "bass", "guitar", "piano", "strings", "other"),
+        "download_mb": 1440,
+        "drum_kit": True,
     },
     "fine": {
         "id": "fine",
         "label": "精细",
         "model": "htdemucs_6s",
+        "engine": "demucs",
         "stems": ("vocals", "drums", "bass", "guitar", "piano", "other"),
         "download_mb": 55,
+        "drum_kit": False,
+    },
+    "fast": {
+        "id": "fast",
+        "label": "快速",
+        "model": "htdemucs",
+        "engine": "demucs",
+        "stems": ("vocals", "drums", "bass", "other"),
+        "download_mb": 84,
+        "drum_kit": False,
     },
 }
 
-DEFAULT_MODE = "fine"
+DEFAULT_MODE = "best"
 
 
 def mode_spec(mode: str | None) -> dict:
     chosen = mode or DEFAULT_MODE
     spec = MODES.get(chosen)
     if spec is None:
-        raise UserFacingError("请选择「快速」或「精细」。")
+        raise UserFacingError("请选择「最高质量」、「精细」或「快速」。")
     return spec
 
 

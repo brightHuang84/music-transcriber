@@ -450,6 +450,168 @@ def _detect_with_adtof(audio: np.ndarray, sample_rate: int) -> list[dict]:
     return _clarify_hits(hits, mono, sample_rate)
 
 
+# Onset gates for a drum stem that has already been split into kit pieces.
+# A looser gate (0.15 / 0.35, wait 4) recalled more hits on the first
+# FluidSynth kit, but on a second pattern it invented ride and kick hits and
+# the F1 fell back to the single-stem model. These stricter gates won on both
+# clips. wait=5 is about 60 ms at the default hop.
+_KIT_DELTA = {
+    "kick": 0.2,
+    "snare": 0.2,
+    "toms": 0.2,
+    "hh": 0.45,
+    "ride": 0.45,
+    "crash": 0.45,
+}
+_KIT_WAIT = 5
+_KIT_KIND = {
+    "kick": "kick",
+    "snare": "snare",
+    "toms": "tom",
+    "hh": "hat",
+    "ride": "ride",
+    "crash": "crash",
+}
+
+
+def _kit_mono(audio: np.ndarray) -> np.ndarray:
+    array = np.asarray(audio, dtype=np.float32)
+    if array.ndim == 1:
+        return array
+    if array.shape[0] == 2 and array.shape[-1] != 2:
+        return array.mean(axis=0).astype(np.float32)
+    if array.shape[-1] == 2:
+        return array.mean(axis=-1).astype(np.float32)
+    return array.reshape(-1).astype(np.float32)
+
+
+def hits_from_kit_pieces(pieces: dict[str, np.ndarray], sample_rate: int) -> list[dict]:
+    """Onsets on each kit piece. A kick and a snare at the same time both stay.
+
+    Hat open/closed and tom high/mid/floor still come from the sound of that
+    piece. Pieces that are essentially silent are skipped.
+    """
+    import librosa
+
+    hits: list[dict] = []
+    for name, kind in _KIT_KIND.items():
+        if name not in pieces:
+            continue
+        wave = _kit_mono(pieces[name])
+        if wave.size < sample_rate // 5 or float(np.sqrt(np.mean(wave**2))) < 1e-4:
+            continue
+        times = librosa.onset.onset_detect(
+            y=wave,
+            sr=sample_rate,
+            units="time",
+            backtrack=False,
+            delta=_KIT_DELTA[name],
+            wait=_KIT_WAIT,
+        )
+        for when in times:
+            when = max(0.0, float(when))
+            start = int(when * sample_rate)
+            segment = wave[start : start + int(0.5 * sample_rate)]
+            if kind == "tom":
+                label = split_family("tom", segment, sample_rate)
+            elif kind == "hat":
+                label = split_family("hat", segment, sample_rate)
+            else:
+                label = kind
+            hits.append({"time": round(when, 4), "kind": label, "velocity": 96})
+    hits.sort(key=lambda hit: (hit["time"], hit["kind"]))
+    kept: list[dict] = []
+    for hit in hits:
+        if kept and kept[-1]["kind"] == hit["kind"] and hit["time"] - kept[-1]["time"] < 0.04:
+            continue
+        kept.append(hit)
+    return kept
+
+
+def _download_kit(on_progress) -> None:
+    import requests
+    from mdxnet_infer import MDX23CInference
+    from mdxnet_infer.utils.cache import get_cache_dir
+    from mdxnet_infer.utils.download import sha256sum
+
+    info = MDX23CInference.KNOWN_MODELS["drumsep-6stem"]
+    cache = get_cache_dir()
+    cache.mkdir(parents=True, exist_ok=True)
+    files = (
+        (info["ckpt_url"], info["ckpt_sha256"], "鼓组"),
+        (info["yaml_url"], info["yaml_sha256"], "鼓组"),
+    )
+    for url, digest, label in files:
+        dest = cache / url.rsplit("/", 1)[-1]
+        if dest.is_file() and sha256sum(dest).lower() == digest.lower():
+            if on_progress is not None:
+                on_progress(0.12, "鼓组模型已经在这台电脑上，不用再下载。")
+            continue
+        if on_progress is not None:
+            on_progress(0.0, "正在下载鼓组模型，大约 438MB。下完留在这台电脑上，下次不用再下。")
+        temporary = dest.with_suffix(dest.suffix + ".part")
+        with requests.get(url, stream=True, timeout=300) as response:
+            response.raise_for_status()
+            total = int(response.headers.get("content-length") or 0)
+            got = 0
+            with temporary.open("wb") as handle:
+                for chunk in response.iter_content(256 * 1024):
+                    if not chunk:
+                        continue
+                    handle.write(chunk)
+                    got += len(chunk)
+                    if on_progress is not None and total > 0:
+                        on_progress(
+                            min(0.2, 0.2 * got / total),
+                            f"正在下载{label}模型… {got / 1e6:.0f}/{total / 1e6:.0f} MB。",
+                        )
+        if sha256sum(temporary).lower() != digest.lower():
+            temporary.unlink(missing_ok=True)
+            raise RuntimeError("drum-kit checksum mismatch")
+        temporary.replace(dest)
+
+
+def detect_kit_drums(audio: np.ndarray, sample_rate: int, on_progress=None) -> list[dict]:
+    """Split the drum stem into kit pieces, then detect an onset on each piece.
+
+    If that model cannot be loaded, fall back to the single-stem drum model
+    so a song still finishes.
+    """
+    try:
+        _download_kit(on_progress)
+        from mdxnet_infer import MDX23CInference
+        import mdxnet_infer.inference as kit_inference
+
+        engine = MDX23CInference.from_pretrained("drumsep-6stem", device="cpu", progress=False)
+
+        def _progress(iterable, **_kwargs):
+            items = list(iterable)
+            total = max(1, len(items))
+            for index, item in enumerate(items, start=1):
+                yield item
+                if on_progress is not None:
+                    on_progress(
+                        0.2 + 0.75 * index / total,
+                        f"正在把鼓拆开… 第 {index}/{total} 段。底鼓、军鼓、通鼓和镲会分开记。",
+                    )
+
+        original = kit_inference.tqdm
+        kit_inference.tqdm = _progress
+        try:
+            pieces = engine.separate(audio, sample_rate=sample_rate, progress=True)
+        finally:
+            kit_inference.tqdm = original
+        hits = hits_from_kit_pieces(pieces, 44100)
+    except Exception:
+        logger.exception("鼓组分离没有跑起来，改用原来的鼓点模型。")
+        if on_progress is not None:
+            on_progress(1.0, "鼓组模型没有跑起来，改用原来的鼓点识别。")
+        return detect_drums(audio, sample_rate)
+    if hits:
+        return hits
+    return detect_drums(audio, sample_rate)
+
+
 def detect_drums(audio: np.ndarray, sample_rate: int) -> list[dict]:
     """Return hits as {time, kind, velocity}, ordered in time."""
     try:

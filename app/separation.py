@@ -1,10 +1,17 @@
-"""Separate a mix with Demucs. 快速 is four stems; 精细 adds piano and guitar."""
+"""Separate a mix.
+
+最高质量 uses BS-RoFormer for drums, bass, piano, and guitar, htdemucs_6s for
+the vocal stem, then a bowed-strings model. 精细 is htdemucs_6s alone. 快速
+is htdemucs.
+"""
 
 from __future__ import annotations
 
 import logging
 import threading
 from pathlib import Path
+
+import numpy as np
 
 from app.errors import UserFacingError
 from app.stems import MODES, mode_spec
@@ -74,11 +81,14 @@ def _weights_cached(repo_id: str, filename: str) -> bool:
 
 
 def ensure_model(model_name: str, on_progress=None) -> None:
-    """Download the Demucs weights on first use and report 0..1 progress.
+    """Download weights on first use and report 0..1 progress.
 
-    Later calls find the file in the Hugging Face cache and return immediately.
+    Later calls find the files in the local cache and return immediately.
     """
     spec = next(item for item in MODES.values() if item["model"] == model_name)
+    if spec.get("engine") == "quality":
+        _ensure_quality(on_progress)
+        return
     label = spec["label"]
     size_mb = int(spec["download_mb"])
 
@@ -170,11 +180,85 @@ def _max_segment(separator) -> float | None:
     return float(segment)
 
 
+def _ensure_quality(on_progress) -> None:
+    """Download the six-stem model, the strings model, then the smaller vocal model."""
+    from app.roformer import ensure_roformer, ensure_strings
+
+    def roformer_progress(fraction: float, message: str) -> None:
+        if on_progress is not None:
+            on_progress(0.62 * fraction, message)
+
+    def strings_progress(fraction: float, message: str) -> None:
+        if on_progress is not None:
+            on_progress(0.62 + 0.28 * fraction, message)
+
+    def vocal_progress(fraction: float, message: str) -> None:
+        if on_progress is not None:
+            on_progress(0.90 + 0.10 * fraction, message)
+
+    ensure_roformer(roformer_progress)
+    ensure_strings(strings_progress)
+    ensure_model("htdemucs_6s", vocal_progress)
+
+
+def _separate_quality(path: Path, on_chunk=None, on_download=None) -> tuple[dict, int]:
+    import soundfile as sf
+
+    from app.roformer import assemble_quality_stems, release_roformer, separate_roformer, separate_strings
+
+    data, rate = sf.read(str(path), always_2d=True, dtype="float32")
+    mix = np.asarray(data.T, dtype=np.float32)
+    roformer = separate_roformer(mix, int(rate), on_chunk=on_chunk)
+    release_roformer()
+
+    def vocal_chunk(info: dict) -> None:
+        if on_chunk is None or info.get("state") != "end":
+            return
+        audio_length = float(info.get("audio_length") or 1)
+        offset = float(info.get("segment_offset") or 0)
+        fraction = min(1.0, max(0.0, offset / audio_length))
+        on_chunk(
+            {
+                "state": "end",
+                "fraction": 0.50 + 0.10 * fraction,
+                "message": "正在补上人声… 最高质量模型几乎不留这种人声，所以这一小步用精细模型。",
+            }
+        )
+
+    demucs_stems, demucs_rate = _separate_demucs(path, "fine", on_chunk=vocal_chunk, on_download=on_download)
+    vocals = demucs_stems["vocals"].detach().cpu().float().numpy()
+    if int(rate) != 44100:
+        import librosa
+
+        mix = librosa.resample(mix, orig_sr=int(rate), target_sr=44100, axis=-1).astype(np.float32)
+    if demucs_rate != 44100:
+        import librosa
+
+        vocals = librosa.resample(vocals, orig_sr=demucs_rate, target_sr=44100, axis=-1).astype(np.float32)
+    strings = separate_strings(mix, 44100, on_chunk=on_chunk)
+    if strings is None:
+        # A failed strings model must not drop the song. The bowed sound stays
+        # in 「其他乐器」, and this track is silent so the button turns grey.
+        strings = np.zeros((2, mix.shape[-1]), dtype=np.float32)
+    assembled = assemble_quality_stems(mix, roformer, vocals, strings)
+    import torch
+
+    tensors = {name: torch.from_numpy(np.ascontiguousarray(audio)) for name, audio in assembled.items()}
+    return tensors, 44100
+
+
 def separate(path: Path, mode: str = "fine", device: str | None = None, on_chunk=None, on_download=None) -> tuple[dict, int]:
     """Return stem tensors keyed by name, plus the model's sample rate.
 
     Tensors are shaped (channels, frames) on CPU.
     """
+    spec = mode_spec(mode)
+    if spec.get("engine") == "quality":
+        return _separate_quality(path, on_chunk=on_chunk, on_download=on_download)
+    return _separate_demucs(path, spec["id"], device=device, on_chunk=on_chunk, on_download=on_download)
+
+
+def _separate_demucs(path: Path, mode: str, device: str | None = None, on_chunk=None, on_download=None) -> tuple[dict, int]:
     spec = mode_spec(mode)
     separator = get_separator(spec["model"], on_progress=on_download)
     chosen = device or pick_device()

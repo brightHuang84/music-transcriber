@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>听音识谱</title>
-  <link rel="stylesheet" href="/style.css?v=5" />
+  <link rel="stylesheet" href="/style.css?v=7" />
 </head>
 <body>
   <header class="top">
@@ -15,7 +15,7 @@
         <h1>听音识谱</h1>
       </div>
     </div>
-    <p class="lede">放入一首歌，它会把人声、鼓、贝斯分开，也能再拆出钢琴和吉他，标出旋律和和声，并画出能跟着看的五线谱。</p>
+        <p class="lede">放入一首歌，它会把人声、鼓、贝斯分开，也能再拆出钢琴、吉他和弦乐，标出旋律和和声，并画出能跟着看的五线谱。</p>
   </header>
 
   <main>
@@ -23,17 +23,24 @@
       <fieldset class="mode-picker">
         <legend>怎么分轨</legend>
         <label class="mode-option">
-          <input type="radio" name="mode" value="fine" checked />
+          <input type="radio" name="mode" value="best" checked />
+          <span>
+            <strong>最高质量</strong>
+            <small>默认，也最慢。钢琴、吉他、鼓、贝斯、弦乐分得更干净，鼓再拆成底鼓、军鼓、通鼓和镲。第一次大约下载 700MB 的分轨模型、300MB 的弦乐模型，鼓组大约再 440MB。在一台 4 核、没有独显的测试电脑上，一首 3 分钟的歌大约要 30 到 40 分钟；更老的电脑会更久。窗口会显示现在算到第几段、这一步大约还要多久。</small>
+          </span>
+        </label>
+        <label class="mode-option">
+          <input type="radio" name="mode" value="fine" />
           <span>
             <strong>精细</strong>
-            <small>在人声、鼓、贝斯之外，再单独分出钢琴和吉他。第一次大约再下载 55MB。一首大约 3 分钟的歌，在没有独显的电脑上两种都是一分多钟，精细不会更慢。小提琴、大提琴、管乐、铜管和合成器仍在「其他乐器」里：目前没有能在普通电脑上自动下载、又比较准的开源模型把它们单独拆开。</small>
+            <small>更快，但仍单独分出钢琴和吉他，鼓用原来的鼓点模型。第一次大约 55MB。一首大约 3 分钟的歌，没有独显时一分多钟。钢琴和吉他容易串到别的轨。小提琴仍在「其他乐器」里。</small>
           </span>
         </label>
         <label class="mode-option">
           <input type="radio" name="mode" value="fast" />
           <span>
             <strong>快速</strong>
-            <small>只分人声、鼓、贝斯、其他乐器。鼓和贝斯通常更干净，钢琴和吉他会留在「其他乐器」。模型大约 84MB，以前分析过歌的电脑一般已经有了，不用再下载。</small>
+            <small>最快。只分人声、鼓、贝斯、其他乐器。钢琴和吉他留在「其他乐器」。模型大约 84MB，以前分析过歌的电脑一般已经有了。一首大约 3 分钟的歌大约一分多钟。</small>
           </span>
         </label>
       </fieldset>
@@ -45,13 +52,13 @@
         </svg>
         <h2>把歌曲拖到这里</h2>
         <p>也可以点击选择。支持 mp3、wav、m4a、flac。</p>
-        <p class="hint">第一次用某种分轨方式时会下载模型，窗口里能看到下载进度。普通电脑处理一首歌大约要几分钟。</p>
+        <p class="hint">第一次用某种分轨方式时会下载模型，窗口里能看到下载了多少。最高质量会慢很多，进度会按段往前走，并写出这一步大约还要多久。请让窗口开着。</p>
         <button type="button" class="primary" id="pick-file">选择歌曲</button>
         <input id="file-input" type="file" accept=".mp3,.wav,.m4a,.flac,audio/mpeg,audio/wav,audio/mp4,audio/flac" hidden />
       </div>
       <div class="demo-row">
         <button type="button" class="ghost" id="demo-button">没有歌曲？先分析一段 4 秒示例</button>
-        <p>示例是程序生成的小旋律，用来熟悉界面。它同样会走完整的分析。</p>
+        <p>示例是程序生成的小旋律，用来熟悉界面。它会用你上面选的分轨方式走完整的分析。选了最高质量的话，这 4 秒也要好几分钟。</p>
       </div>
     </section>
 
@@ -205,7 +212,7 @@
           <li>唱名 <b>do re mi fa sol la si</b> 对应 C D E F G A B。带 # 的是升号，比如 #fa 就是 F#。</li>
           <li>鼓的每一行是一种鼓。<b>底鼓</b>常在强拍，<b>军鼓</b>常在第 2、第 4 拍，<b>闭镲</b>打得密，<b>开镲</b>会响得更长。<b>叮叮镲</b>是节奏镲，<b>吊镲</b>是重音。<b>高通鼓</b>、<b>中通鼓</b>、<b>落地通鼓</b>音高从高到低。</li>
           <li>竖线是拍子，更重的线是小节的第一拍。圆点会跟着拍子亮一下。</li>
-          <li>精细模式会多出钢琴和吉他。变灰的按钮是这首歌里几乎没有声音的轨，点开也能看。小提琴、大提琴、管乐和合成器目前算在「其他乐器」里。</li>
+          <li>最高质量把钢琴、吉他、鼓、贝斯和弦乐分得更干净，鼓谱按拆开的鼓来记。精细更快，但钢琴和吉他容易串音，小提琴仍在「其他乐器」里。快速不单独分钢琴和吉他。变灰的按钮是这首歌里几乎没有声音的轨。管乐、铜管和合成器仍在「其他乐器」里。</li>
           <li>砖红色的音是旋律。其他颜色是和声：和弦、铺底、分解和弦。贝斯单独算低音，不放进旋律，也不放进和声。</li>
           <li>「只看旋律」「只看和声」可以分开看。「当前乐器」是这一轨自己的旋律；「整首歌」是整首最突出的那条线。人声又轻又少时，不会把漏进来的人声当成主旋律。</li>
           <li>「五线谱」按检测到的调号、拍号和速度对齐到八分音符，方便初学，不会写成一堆很碎的短音。和弦名写在谱表上方。钢琴用高低音双谱表。鼓谱仍按十六分音符。</li>
@@ -219,6 +226,6 @@
     <p>歌曲只在这台电脑上处理，不会上传到网上。</p>
   </footer>
   <script src="/vendor/opensheetmusicdisplay.min.js"></script>
-  <script src="/app.js?v=5"></script>
+  <script src="/app.js?v=7"></script>
 </body>
 </html>
