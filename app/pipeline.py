@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 MAX_DURATION_SECONDS = 10 * 60
 MIN_DURATION_SECONDS = 2.0
+# Below this, a stem is treated as empty: no notes, and the tab is grey.
+# 0.001 still left a film-score vocal stem that was only a little bleed.
+QUIET_RMS = 0.003
 
 
 def _report(progress, percent: float, step: str, message: str) -> None:
@@ -137,7 +140,7 @@ def analyze(source: Path, work_dir: Path, progress, mode: str = DEFAULT_MODE) ->
     for index, stem in enumerate(pitched):
         percent = 54 + int(28 * index / max(1, len(pitched)))
         _report(progress, percent, "notes", f"正在识别{label_for(stem)}的音高…")
-        if rms(stem_audio[stem]) < 1e-3:
+        if rms(stem_audio[stem]) < QUIET_RMS:
             notes[stem] = []
             continue
         notes[stem] = transcribe(stem_dir / f"{stem}.wav", stem, midi_tempo=bpm)
@@ -176,7 +179,7 @@ def analyze(source: Path, work_dir: Path, progress, mode: str = DEFAULT_MODE) ->
     for stem in stem_names:
         entry = {
             "rms": round(rms(stem_audio[stem]), 5),
-            "silent": rms(stem_audio[stem]) < 1e-3,
+            "silent": rms(stem_audio[stem]) < QUIET_RMS,
             "peaks": waveform_peaks(stem_audio[stem]),
         }
         if stem == "drums":
