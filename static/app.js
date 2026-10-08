@@ -39,6 +39,7 @@ let sources = [];
 let raf = 0;
 let pxPerSec = 80;
 let playGeneration = 0;
+let wallStarted = 0;
 let followPlayback = true;
 let rollLayout = null;
 
@@ -274,8 +275,13 @@ function stopToStart() {
 }
 
 function currentTime() {
-  if (!playing || !audioCtx) return pauseOffset;
-  return Math.min(result.duration, audioCtx.currentTime - startedAt);
+  if (!playing) return pauseOffset;
+  // The on-screen clock follows the wall clock. A missing or stalled audio
+  // device used to freeze currentTime, so the playhead never reached the
+  // edge and follow had nothing to do. The sound, when the device runs,
+  // was started at the same offset.
+  const elapsed = (performance.now() - wallStarted) / 1000;
+  return Math.min(result.duration, Math.max(0, pauseOffset + elapsed));
 }
 
 function audibleNames() {
@@ -312,6 +318,7 @@ function startPlayback() {
     return source;
   });
   startedAt = audioCtx.currentTime - pauseOffset;
+  wallStarted = performance.now();
   playing = true;
   syncTransport();
   tick();
@@ -339,6 +346,12 @@ function seek(seconds) {
 
 function tick() {
   const time = currentTime();
+  if (playing && result && time >= result.duration - 0.05) {
+    pauseOffset = 0;
+    stopPlayback();
+    paint(0);
+    return;
+  }
   paint(time);
   if (playing) raf = requestAnimationFrame(tick);
 }
