@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.audio_io import convert_to_wav, load_audio, save_wav
 from app.chords import detect_chords
-from app.drums import DRUM_MIDI, clarify_kinds, detect_drums_by_spectrum, split_family
+from app.drums import DRUM_MIDI, _clarify_hits, clarify_kinds, detect_drums, detect_drums_by_spectrum, split_family
 from app.midi_export import write_combined_midi, write_stem_midi
 from app.notes import midi_to_name, midi_to_solfege
 from app.rhythm import analyze_rhythm
@@ -121,6 +121,113 @@ def test_same_onset_is_not_kick_and_tom_and_a_dark_hit_is_not_a_cymbal():
     spectrum[freqs < 800] = 0
     snare = np.fft.irfft(spectrum, n=noisy.size).astype(np.float32)
     assert clarify_kinds(["snare", "tom_floor"], snare, sample_rate) == ["snare"]
+
+
+def _noise_burst(seconds, low_hz, high_hz, decay, seed, sample_rate=44100):
+    count = max(8, int(seconds * sample_rate))
+    noise = np.random.default_rng(seed).standard_normal(count).astype(np.float32)
+    spectrum = np.fft.rfft(noise)
+    freqs = np.fft.rfftfreq(count, 1.0 / sample_rate)
+    spectrum[(freqs < low_hz) | (freqs > high_hz)] = 0
+    wave = np.fft.irfft(spectrum, n=count).astype(np.float32)
+    time = np.arange(count, dtype=np.float32) / sample_rate
+    wave *= np.exp(-time / decay)
+    peak = float(np.max(np.abs(wave))) + 1e-8
+    return (wave / peak).astype(np.float32)
+
+
+def _place(buffer, when, clip, sample_rate):
+    start = int(when * sample_rate)
+    end = min(buffer.size, start + clip.size)
+    if end > start:
+        buffer[start:end] += clip[: end - start]
+
+
+def _score_hits(expected, predicted, tolerance=0.06):
+    expected_by_kind = {}
+    predicted_by_kind = {}
+    for hit in expected:
+        expected_by_kind.setdefault(hit["kind"], []).append(float(hit["time"]))
+    for hit in predicted:
+        predicted_by_kind.setdefault(hit["kind"], []).append(float(hit["time"]))
+    stats = {}
+    for kind in sorted(set(expected_by_kind) | set(predicted_by_kind)):
+        wanted = sorted(expected_by_kind.get(kind, []))
+        found = sorted(predicted_by_kind.get(kind, []))
+        used = [False] * len(found)
+        matched = 0
+        for when in wanted:
+            for index, got in enumerate(found):
+                if used[index] or abs(got - when) > tolerance:
+                    continue
+                used[index] = True
+                matched += 1
+                break
+        false_pos = len(found) - matched
+        false_neg = len(wanted) - matched
+        stats[kind] = {
+            "precision": matched / (matched + false_pos) if matched + false_pos else 1.0,
+            "recall": matched / (matched + false_neg) if matched + false_neg else 1.0,
+            "tp": matched,
+            "fp": false_pos,
+            "fn": false_neg,
+        }
+    return stats
+
+
+def _simultaneous_kit(sample_rate=44100):
+    """Kick+hat, snare+hat, kick+crash, snare+crash, each twice."""
+    duration = 8.0
+    audio = np.zeros(int(duration * sample_rate), dtype=np.float32)
+    kick = _tone_burst(55, 0.2, sample_rate) * 0.9
+    snare = _noise_burst(0.18, 180, 4000, 0.045, seed=11, sample_rate=sample_rate) * 0.85
+    hat = _noise_burst(0.045, 7000, 16000, 0.012, seed=12, sample_rate=sample_rate) * 0.55
+    crash = _noise_burst(0.7, 3000, 16000, 0.22, seed=13, sample_rate=sample_rate) * 0.7
+    pattern = [
+        (1.0, ("kick", "hat_closed"), (kick, hat)),
+        (2.0, ("snare", "hat_closed"), (snare, hat)),
+        (3.0, ("kick", "crash"), (kick, crash)),
+        (4.0, ("snare", "crash"), (snare, crash)),
+        (5.0, ("kick", "hat_closed"), (kick, hat)),
+        (6.0, ("snare", "hat_closed"), (snare, hat)),
+    ]
+    expected = []
+    proposed = []
+    for when, kinds, clips in pattern:
+        for kind, clip in zip(kinds, clips):
+            _place(audio, when, clip, sample_rate)
+            expected.append({"time": when, "kind": kind})
+            proposed.append({"time": when, "kind": kind, "velocity": 90})
+    peak = float(np.max(np.abs(audio))) + 1e-8
+    return audio / peak * 0.8, expected, proposed, sample_rate
+
+
+def test_simultaneous_drums_keep_each_class_and_drop_duplicate_toms():
+    sample_rate = 44100
+    audio, expected, proposed, _sr = _simultaneous_kit(sample_rate)
+    clarified = _clarify_hits(proposed, audio, sample_rate)
+    stats = _score_hits(expected, clarified)
+    for kind in ("kick", "snare", "hat_closed", "crash"):
+        assert stats[kind]["precision"] == 1.0, stats
+        assert stats[kind]["recall"] == 1.0, stats
+    # The same low hit labeled as every tom is still one tom.
+    tom = _tone_burst(120, 0.3, sample_rate)
+    assert clarify_kinds(["tom_high", "tom_mid", "tom_floor"], tom, sample_rate) == ["tom_mid"]
+    kick = _tone_burst(55, 0.25, sample_rate)
+    assert clarify_kinds(["kick", "tom_floor", "tom_high"], kick, sample_rate) == ["kick"]
+    # Full detector on the same pattern. ADTOF was trained on real kits, so
+    # synthesized snares and crashes are only partly heard. A pair it does
+    # hear must survive as two notes, and kicks must not grow a floor tom.
+    detected = detect_drums(audio.astype(np.float32), sample_rate)
+    model_stats = _score_hits(expected, detected, tolerance=0.1)
+    assert model_stats["kick"]["precision"] == 1.0, model_stats
+    assert model_stats["kick"]["recall"] == 1.0, model_stats
+    by_time = {}
+    for hit in detected:
+        by_time.setdefault(round(hit["time"], 1), set()).add(hit["kind"])
+    assert any("kick" in kinds and any(kind.startswith("hat_") for kind in kinds) for kinds in by_time.values()), model_stats
+    assert any("snare" in kinds and "crash" in kinds for kinds in by_time.values()), model_stats
+    assert all(not kind.startswith("tom_") for kinds in by_time.values() for kind in kinds), model_stats
 
 
 def test_drum_midi_notes_follow_general_midi():
