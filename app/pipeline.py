@@ -17,7 +17,7 @@ from app.audio_io import (
     waveform_peaks,
 )
 from app.chords import detect_chords
-from app.drums import detect_drums
+from app.drums import detect_drums, detect_kit_drums
 from app.errors import UserFacingError
 from app.melody import split_performance
 from app.midi_export import STEM_PROGRAM, STEM_TRACK, write_combined_midi, write_lead_midi, write_part_midi, write_stem_midi
@@ -48,7 +48,7 @@ def _tensor_to_numpy(tensor) -> np.ndarray:
 def analyze(source: Path, work_dir: Path, progress, mode: str = DEFAULT_MODE) -> dict:
     """Analyze one song. `progress(percent, step, message)` is called along the way.
 
-    `mode` is "fast" (vocals, drums, bass, other) or "fine" (those plus guitar and piano).
+    `mode` is "fast", "fine", or "best" (the slow default, with a strings stem).
     """
     spec = mode_spec(mode)
     stem_names = tuple(spec["stems"])
@@ -87,33 +87,37 @@ def analyze(source: Path, work_dir: Path, progress, mode: str = DEFAULT_MODE) ->
     # The separator often reports progress only when a chunk finishes. A slow
     # ticker keeps the page from looking frozen on CPU.
     stop_ticker = threading.Event()
+    chunk_seen = {"yes": False}
+    # 最高质量 spends most of the wait inside separation, so the bar moves
+    # further before transcription starts.
+    separate_span = 52.0 if spec["id"] == "best" else 28.0
 
     def _tick() -> None:
         percent = 20.0
         while not stop_ticker.wait(1.5):
+            if chunk_seen["yes"]:
+                return
             percent = min(44.0, percent + 1.5)
-            _report(
-                progress,
-                percent,
-                "separate",
-                f"正在分离音轨（{spec['label']}）…普通电脑会慢一些，页面可以开着，不用反复点击。",
-            )
+            hint = "这一步最慢，页面可以开着。" if spec["id"] == "best" else "普通电脑会慢一些，页面可以开着，不用反复点击。"
+            _report(progress, percent, "separate", f"正在分离音轨（{spec['label']}）…{hint}")
 
     ticker = threading.Thread(target=_tick, daemon=True)
     ticker.start()
 
     def on_chunk(info: dict) -> None:
-        if info.get("state") != "end":
+        if "fraction" not in info and info.get("state") != "end":
             return
-        audio_length = float(info.get("audio_length") or 1)
-        offset = float(info.get("segment_offset") or 0)
-        fraction = min(1.0, max(0.0, offset / audio_length))
-        _report(
-            progress,
-            18 + 28 * fraction,
-            "separate",
-            f"正在分离音轨（{spec['label']}）…普通电脑会慢一些，页面可以开着，不用反复点击。",
+        chunk_seen["yes"] = True
+        if "fraction" in info:
+            fraction = min(1.0, max(0.0, float(info["fraction"])))
+        else:
+            audio_length = float(info.get("audio_length") or 1)
+            offset = float(info.get("segment_offset") or 0)
+            fraction = min(1.0, max(0.0, offset / audio_length))
+        message = info.get("message") or (
+            f"正在分离音轨（{spec['label']}）…普通电脑会慢一些，页面可以开着，不用反复点击。"
         )
+        _report(progress, 18 + separate_span * fraction, "separate", message)
 
     try:
         stem_tensors, model_rate = separate(mix_path, mode=spec["id"], on_chunk=on_chunk)
@@ -134,13 +138,16 @@ def analyze(source: Path, work_dir: Path, progress, mode: str = DEFAULT_MODE) ->
         stem_audio[name] = audio
         save_wav(stem_dir / f"{name}.wav", audio, model_rate)
 
-    _report(progress, 48, "rhythm", "正在听速度和节拍…")
+    after_separate = 72 if spec["id"] == "best" else 48
+    _report(progress, after_separate, "rhythm", "正在听速度和节拍…")
     rhythm = analyze_rhythm(mix, stem_audio["drums"], model_rate)
     bpm = float(rhythm["bpm"])
 
     notes: dict[str, list] = {}
     for index, stem in enumerate(pitched):
-        percent = 54 + int(28 * index / max(1, len(pitched)))
+        note_base = 74 if spec["id"] == "best" else 54
+        note_span = 10 if spec["id"] == "best" else 28
+        percent = note_base + int(note_span * index / max(1, len(pitched)))
         _report(progress, percent, "notes", f"正在识别{label_for(stem)}的音高…")
         if rms(stem_audio[stem]) < QUIET_RMS:
             notes[stem] = []
@@ -148,9 +155,18 @@ def analyze(source: Path, work_dir: Path, progress, mode: str = DEFAULT_MODE) ->
         notes[stem] = transcribe(stem_dir / f"{stem}.wav", stem, midi_tempo=bpm)
 
     _report(progress, 86, "drums", "正在分辨底鼓、军鼓、踩镲、叮叮镲、吊镲和通鼓…")
-    hits = detect_drums(stem_audio["drums"], model_rate) if rms(stem_audio["drums"]) >= 1e-4 else []
 
-    _report(progress, 92, "chords", "正在估计和弦…")
+    def on_drums(fraction: float, message: str) -> None:
+        _report(progress, 86 + 6 * fraction, "drums", message)
+
+    if rms(stem_audio["drums"]) < 1e-4:
+        hits = []
+    elif spec.get("drum_kit"):
+        hits = detect_kit_drums(stem_audio["drums"], model_rate, on_progress=on_drums)
+    else:
+        hits = detect_drums(stem_audio["drums"], model_rate)
+
+    _report(progress, 93, "chords", "正在估计和弦…")
     harmony_audio = stem_audio[pitched[0]]
     for name in pitched[1:]:
         harmony_audio = harmony_audio + stem_audio[name]

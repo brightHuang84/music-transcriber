@@ -320,14 +320,68 @@ def test_instrument_programs_match_general_midi():
     assert STEMS["vocals"]["program"] == 53
     assert STEMS["bass"]["program"] == 33
     assert STEMS["other"]["program"] == 48
+    assert STEMS["strings"]["program"] == 48
+    assert STEMS["strings"]["label"] == "弦乐"
     assert "violin" not in STEMS
     assert MODES["fine"]["model"] == "htdemucs_6s"
     assert "piano" in MODES["fine"]["stems"]
     assert "guitar" in MODES["fine"]["stems"]
+    assert "strings" not in MODES["fine"]["stems"]
+    assert "strings" in MODES["best"]["stems"]
     assert "piano" not in MODES["fast"]["stems"]
     assert mode_spec("fine")["id"] == "fine"
+    assert mode_spec(None)["id"] == "best"
+    assert MODES["best"]["drum_kit"] is True
     with pytest.raises(UserFacingError):
         mode_spec("studio")
+
+
+def test_quality_assemble_keeps_roformer_instruments_and_supplied_vocals():
+    from app.roformer import assemble_quality_stems
+
+    mix = np.ones((2, 8), dtype=np.float32)
+    roformer = {name: np.full((2, 8), 0.1, dtype=np.float32) for name in ("drums", "bass", "piano", "guitar", "vocals", "other")}
+    vocals = np.full((2, 8), 0.2, dtype=np.float32)
+    stems = assemble_quality_stems(mix, roformer, vocals)
+    assert stems["vocals"][0, 0] == pytest.approx(0.2)
+    assert stems["piano"][0, 0] == pytest.approx(0.1)
+    assert stems["guitar"][0, 0] == pytest.approx(0.1)
+    # Mix minus vocals and the four instrument stems: 1 - 0.2 - 0.4.
+    assert stems["other"][0, 0] == pytest.approx(0.4)
+    assert "strings" not in stems
+    bowed = np.full((2, 8), 0.15, dtype=np.float32)
+    with_strings = assemble_quality_stems(mix, roformer, vocals, bowed)
+    assert with_strings["strings"][0, 0] == pytest.approx(0.15)
+    assert with_strings["other"][0, 0] == pytest.approx(0.25)
+
+
+def test_kit_pieces_keep_simultaneous_kick_and_snare():
+    from app.drums import hits_from_kit_pieces
+
+    sample_rate = 44100
+    silence = np.zeros(sample_rate * 2, dtype=np.float32)
+
+    def burst(at: float, seconds: float, seed: int) -> np.ndarray:
+        wave = silence.copy()
+        start = int(at * sample_rate)
+        count = int(seconds * sample_rate)
+        rng = np.random.default_rng(seed)
+        wave[start : start + count] = rng.standard_normal(count).astype(np.float32) * 0.5
+        return wave
+
+    pieces = {
+        "kick": burst(0.50, 0.09, 1),
+        "snare": burst(0.50, 0.09, 2),
+        "toms": silence,
+        "hh": burst(1.20, 0.04, 3),
+        "ride": silence,
+        "crash": silence,
+    }
+    hits = hits_from_kit_pieces(pieces, sample_rate)
+    groups: dict[float, set[str]] = {}
+    for hit in hits:
+        groups.setdefault(round(hit["time"], 1), set()).add(hit["kind"])
+    assert any("kick" in kinds and "snare" in kinds for kinds in groups.values()), hits
 
 
 def test_isolated_piano_and_violin_notes_transcribe(tmp_path: Path):

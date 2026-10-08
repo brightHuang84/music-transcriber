@@ -1,0 +1,8 @@
+# Installed with --no-deps (see install.sh) so the CPU PyTorch build stays put.
+# Weights are not included. The window downloads them on first use.
+bs-roformer-infer==0.1.5
+mdxnet-infer==0.1.0
+beartype==0.22.9
+ml-collections==1.1.0
+rotary-embedding-torch==0.9.1
+absl-py==2.5.0

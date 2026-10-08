@@ -108,6 +108,11 @@ fi
 
 echo "正在安装分析和窗口组件（第一次会比较久）…"
 pyinstall -r "${ROOT}/requirements.txt"
+# These inference packages declare torch>=2.0. Installing them with dependencies
+# would replace the CPU torch build chosen above, so their own dependencies are
+# listed here and torch is left untouched.
+echo "正在安装更高质量的分轨组件…"
+pyinstall --no-deps -r "${ROOT}/requirements-quality.txt"
 pyinstall "basic-pitch==0.4.0" --no-deps
 # Drum transcription. --no-deps keeps the torch build chosen above.
 pyinstall --no-deps "adtof-pytorch @ git+https://github.com/xavriley/ADTOF-pytorch.git@85c192e78f716ea0b111cc8a5ee4a8f6a3a4f8a9"

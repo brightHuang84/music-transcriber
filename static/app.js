@@ -4,10 +4,11 @@ const STEMS = {
   bass: { label: "贝斯", en: "Bass", pitched: true, color: "#2d6d9a" },
   guitar: { label: "吉他", en: "Guitar", pitched: true, color: "#7a4e8a" },
   piano: { label: "钢琴", en: "Piano", pitched: true, color: "#3c5aa0" },
+  strings: { label: "弦乐", en: "Strings", pitched: true, color: "#8a5a2b" },
   other: { label: "其他乐器", en: "Other", pitched: true, color: "#3d8b6e" },
 };
 
-const STEM_ORDER = ["vocals", "drums", "bass", "guitar", "piano", "other"];
+const STEM_ORDER = ["vocals", "drums", "bass", "guitar", "piano", "strings", "other"];
 
 const DRUM_ROWS = [
   { kind: "crash", label: "吊镲", en: "Crash" },
@@ -957,8 +958,11 @@ function refreshView() {
 }
 
 function modeBlurb() {
+  if (result && result.mode === "best") {
+    return "这次用的是最高质量。钢琴、吉他、鼓、贝斯和弦乐分得更干净，鼓是拆开以后再记的。人声用另一套模型补上。管乐、铜管和合成器如果有，仍在「其他乐器」。变灰的是这首歌里几乎没声音的轨。";
+  }
   if (result && result.mode === "fine") {
-    return "这次用的是精细。钢琴和吉他单独成轨。小提琴、大提琴、管乐、铜管和合成器如果有，会留在「其他乐器」。变灰的是这首歌里几乎没声音的轨。";
+    return "这次用的是精细。钢琴和吉他单独成轨，但可能串音。小提琴、大提琴、管乐、铜管和合成器如果有，会留在「其他乐器」。变灰的是这首歌里几乎没声音的轨。";
   }
   return "这次用的是快速。音轨是人声、鼓、贝斯和其他乐器。钢琴和吉他算在「其他乐器」里。";
 }
