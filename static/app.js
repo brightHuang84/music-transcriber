@@ -40,7 +40,7 @@ let raf = 0;
 let pxPerSec = 80;
 let playGeneration = 0;
 let followPlayback = true;
-let programmaticScroll = 0;
+let rollLayout = null;
 
 const DRUM_LABEL = Object.fromEntries(DRUM_ROWS.map((row) => [row.kind, row.label]));
 const DRUM_EN = Object.fromEntries(DRUM_ROWS.map((row) => [row.kind, row.en]));
@@ -158,11 +158,9 @@ async function poll(id) {
 }
 
 function setScroll(element, property, value) {
-  programmaticScroll += 1;
+  // Assigning scrollLeft/scrollTop fires a scroll event on a later turn in
+  // Qt WebEngine. Follow must not treat that event as the user letting go.
   element[property] = value;
-  window.setTimeout(() => {
-    programmaticScroll -= 1;
-  }, 0);
 }
 
 function syncTransport() {
@@ -182,9 +180,78 @@ function pauseFollow() {
   syncTransport();
 }
 
-function userMovedScroll() {
-  if (programmaticScroll > 0 || !playing) return;
+function userScrolled(event) {
+  if (!result || !followPlayback) return;
+  if (event && event.ctrlKey) return;
   pauseFollow();
+}
+
+function scrollbarGrabbed(element, event) {
+  if (!result || !followPlayback) return;
+  const box = element.getBoundingClientRect();
+  const onVerticalBar = event.clientX >= box.right - 22 && element.scrollHeight > element.clientHeight + 2;
+  const onHorizontalBar = event.clientY >= box.bottom - 22 && element.scrollWidth > element.clientWidth + 2;
+  if (event.target === element || onVerticalBar || onHorizontalBar) pauseFollow();
+}
+
+function nudgeScroll(element, property, target, immediate) {
+  const max = property === "scrollLeft"
+    ? Math.max(0, element.scrollWidth - element.clientWidth)
+    : Math.max(0, element.scrollHeight - element.clientHeight);
+  const next = Math.min(max, Math.max(0, target));
+  const current = element[property];
+  if (Math.abs(current - next) < 0.5) return;
+  setScroll(element, property, immediate ? next : current + (next - current) * 0.28);
+}
+
+function activeRollY(time) {
+  const chordLane = 36;
+  if (!rollLayout) return null;
+  if (rollLayout.type === "drums") {
+    const hit = (result.stems.drums.hits || []).find((item) => Math.abs(item.time - time) < 0.09);
+    if (!hit) return null;
+    const row = DRUM_ROWS.findIndex((item) => item.kind === hit.kind);
+    if (row < 0) return null;
+    return chordLane + (row + 0.5) * rollLayout.rowH;
+  }
+  const notes = (result.stems[viewStem].notes || []).filter((note) => time >= note.start && time < note.end);
+  if (!notes.length || rollLayout.maxPitch == null) return null;
+  const y = (rollLayout.maxPitch - notes[0].pitch) * rollLayout.rowH;
+  return chordLane + y + rollLayout.rowH / 2;
+}
+
+function followPlayhead(time) {
+  const scroller = document.querySelector("#roll-scroll");
+  const immediate = !playing;
+  if (scroller && scroller.clientWidth > 0) {
+    const x = time * pxPerSec;
+    const view = scroller.clientWidth;
+    const target = x - view * 0.33;
+    const outside = x < scroller.scrollLeft + 28 || x > scroller.scrollLeft + view - 36;
+    nudgeScroll(scroller, "scrollLeft", target, immediate || outside);
+  }
+  const box = document.querySelector(".table-scroll");
+  const activeRow = document.querySelector("#note-body tr.active");
+  if (box && activeRow && box.scrollHeight > box.clientHeight + 4) {
+    const top = activeRow.offsetTop;
+    const bottom = top + activeRow.offsetHeight;
+    const view = box.clientHeight;
+    const outside = top < box.scrollTop + 4 || bottom > box.scrollTop + view - 4;
+    nudgeScroll(box, "scrollTop", top - view * 0.35, immediate || outside);
+  }
+  const gutter = document.querySelector("#gutter");
+  if (scroller && scroller.scrollHeight > scroller.clientHeight + 4) {
+    const y = activeRollY(time);
+    if (y != null) {
+      const view = scroller.clientHeight;
+      const outside = y < scroller.scrollTop + 20 || y > scroller.scrollTop + view - 20;
+      nudgeScroll(scroller, "scrollTop", y - view * 0.4, immediate || outside);
+    }
+  }
+  if (gutter) {
+    const offset = scroller && scroller.scrollHeight > scroller.clientHeight + 4 ? -scroller.scrollTop : 0;
+    gutter.style.transform = offset ? `translateY(${offset}px)` : "";
+  }
 }
 
 function stopPlayback() {
@@ -297,13 +364,6 @@ function paint(time) {
   document.querySelector("#scrub").value = String(Math.round((time / result.duration) * 1000));
   const playhead = document.querySelector("#playhead");
   playhead.style.left = `${time * pxPerSec}px`;
-  const scroller = document.querySelector("#roll-scroll");
-  if (playing && followPlayback) {
-    const x = time * pxPerSec;
-    if (x < scroller.scrollLeft + 40 || x > scroller.scrollLeft + scroller.clientWidth - 60) {
-      setScroll(scroller, "scrollLeft", Math.max(0, x - scroller.clientWidth * 0.3));
-    }
-  }
   const sounding = notesAt(time);
   document.querySelector("#now-notes").textContent = sounding.length
     ? sounding.map((note) => `${note.name}  ${note.solfege}`).join("   ")
@@ -318,19 +378,9 @@ function paint(time) {
     const active = time >= start && time < end;
     row.classList.toggle("active", active);
   });
-  if (playing && followPlayback) {
-    const activeRow = document.querySelector("#note-body tr.active");
-    const box = document.querySelector(".table-scroll");
-    if (activeRow && box) {
-      const top = activeRow.offsetTop;
-      const bottom = top + activeRow.offsetHeight;
-      if (top < box.scrollTop + 4 || bottom > box.scrollTop + box.clientHeight - 4) {
-        setScroll(box, "scrollTop", Math.max(0, top - box.clientHeight * 0.35));
-      }
-    }
-  }
   if (viewStem === "drums") drawDrums(time);
   else drawPiano(time);
+  if (followPlayback) followPlayhead(time);
 }
 
 function layoutWidth() {
@@ -385,6 +435,7 @@ function drawPiano(time) {
   gutter.innerHTML = "";
   gutter.style.height = `${height}px`;
   if (!notes.length) {
+    rollLayout = null;
     ctx.fillStyle = "#6f6256";
     ctx.font = "16px sans-serif";
     ctx.fillText("这一轨没有识别到音符。", 16, 40);
@@ -395,6 +446,7 @@ function drawPiano(time) {
   const maxPitch = Math.max(...pitches) + 2;
   const rows = Math.max(8, maxPitch - minPitch + 1);
   const rowH = height / rows;
+  rollLayout = { type: "piano", maxPitch, rowH };
   drawGrid(ctx, width, height, 0);
   for (let pitch = maxPitch; pitch >= minPitch; pitch -= 1) {
     const y = (maxPitch - pitch) * rowH;
@@ -451,6 +503,7 @@ function drawDrums(time) {
   gutter.innerHTML = "";
   gutter.style.height = `${height}px`;
   const rowH = height / DRUM_ROWS.length;
+  rollLayout = { type: "drums", rowH };
   DRUM_ROWS.forEach((row, index) => {
     const label = document.createElement("span");
     label.textContent = row.label;
@@ -691,19 +744,10 @@ document.querySelector("#follow").addEventListener("click", () => {
 });
 ["#roll-scroll", ".table-scroll"].forEach((selector) => {
   const element = document.querySelector(selector);
-  element.addEventListener("scroll", userMovedScroll, { passive: true });
-  element.addEventListener("wheel", () => {
-    if (playing) pauseFollow();
-  }, { passive: true });
-  element.addEventListener("pointerdown", (event) => {
-    if (!playing) return;
-    const box = element.getBoundingClientRect();
-    const onVerticalBar = event.clientX >= box.right - 18;
-    const onHorizontalBar = event.clientY >= box.bottom - 18;
-    if (onVerticalBar || onHorizontalBar) pauseFollow();
-  });
+  element.addEventListener("wheel", userScrolled, { passive: true });
+  element.addEventListener("pointerdown", (event) => scrollbarGrabbed(element, event));
 });
-window.addEventListener("scroll", userMovedScroll, { passive: true });
+window.addEventListener("wheel", userScrolled, { passive: true });
 document.querySelector("#scrub").addEventListener("input", () => {
   if (!result) return;
   seek((Number(document.querySelector("#scrub").value) / 1000) * result.duration);
@@ -728,10 +772,12 @@ document.querySelector("#again").addEventListener("click", resetToDrop);
 document.querySelector("#error-back").addEventListener("click", resetToDrop);
 window.addEventListener("keydown", (event) => {
   const isSpace = event.code === "Space" || event.key === " ";
-  if (!result || !isSpace || event.repeat) return;
   const tag = event.target && event.target.tagName;
-  if (tag === "TEXTAREA" || tag === "SELECT") return;
-  if (tag === "INPUT" && event.target.id !== "scrub") return;
+  const typing = tag === "TEXTAREA" || tag === "SELECT" || (tag === "INPUT" && event.target.id !== "scrub");
+  if (!typing && result && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End"].includes(event.key)) {
+    pauseFollow();
+  }
+  if (!result || !isSpace || event.repeat || typing) return;
   event.preventDefault();
   togglePlay();
 }, true);

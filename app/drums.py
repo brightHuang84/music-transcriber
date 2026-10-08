@@ -1,13 +1,15 @@
 """Transcribe the drum stem into separate kit pieces.
 
 ADTOF's Frame RNN (PyTorch) hears five families on the separated drum stem:
-kick, snare, hi-hat, tom, and cymbal. A short look at each hit then splits
-hi-hat into closed/open, cymbal into ride/crash, and tom into high/mid/floor.
-The same onset is kept as one low drum: a model that fires kick, snare, and
-tom together is usually one hit. A low thud is not called a high tom or a
-cymbal unless the sound actually has that brightness. Those names map to
-General MIDI drum notes. If the model cannot be loaded, a simpler spectrum
-classifier is used so a half-finished install still runs.
+kick, snare, hi-hat, tom, and cymbal. Each family has its own threshold, so
+a kick and a hat at the same moment both come through. A short look at each
+hit then splits hi-hat into closed/open, cymbal into ride/crash, and tom into
+high/mid/floor. A hat or a cymbal stays only when the sound is actually bright,
+and it stays next to the kick or snare underneath it. Two tom names, or a tom
+that is really the same low thud as the kick, collapse to one drum. A low thud
+is not called a high tom. Those names map to General MIDI drum notes. If the
+model cannot be loaded, a simpler spectrum classifier is used so a
+half-finished install still runs.
 """
 
 from __future__ import annotations
@@ -131,9 +133,15 @@ def split_family(family: str, segment: np.ndarray, sample_rate: int) -> str:
         bright = _high_passed(segment, sample_rate, 3000.0)
         return "hat_open" if _decay_seconds(bright, sample_rate) >= 0.09 else "hat_closed"
     if family == "cymbal":
-        decay = _decay_seconds(segment, sample_rate, ratio=0.18)
-        flatness = _spectral_flatness(segment[: min(segment.size, int(0.12 * sample_rate))])
-        if decay >= 0.35 or (decay >= 0.22 and flatness >= 0.28):
+        # The kick under a crash is loud and short. Judging the ring on the
+        # unfiltered mix called that crash a ride.
+        bright = _high_passed(segment, sample_rate, 3000.0)
+        decay = _decay_seconds(bright, sample_rate, ratio=0.18)
+        window = bright[: min(bright.size, int(0.12 * sample_rate))]
+        flatness = _spectral_flatness(window)
+        # 0.30 s, not 0.35: a snare on the same onset steals the first peak
+        # and shortens the measured ring of a crash.
+        if decay >= 0.30 or (decay >= 0.22 and flatness >= 0.28):
             return "crash"
         return "ride"
     if family == "tom":
@@ -191,12 +199,30 @@ def _choose_low(
     return "tom_floor"
 
 
-def clarify_kinds(kinds: list[str], segment: np.ndarray, sample_rate: int) -> list[str]:
-    """Drop labels the audio itself does not support.
+def _band_rms(segment: np.ndarray, sample_rate: int, low_hz: float) -> float:
+    """Loudness above low_hz. A quiet hat under a kick still shows up here."""
+    clip = np.asarray(segment[: max(32, int(0.08 * sample_rate))], dtype=np.float32)
+    if clip.size < 32:
+        return 0.0
+    spectrum = np.fft.rfft(clip)
+    frequencies = np.fft.rfftfreq(clip.size, 1.0 / sample_rate)
+    spectrum = spectrum.copy()
+    spectrum[frequencies < low_hz] = 0
+    wave = np.fft.irfft(spectrum, n=clip.size)
+    return float(np.sqrt(np.mean(np.square(wave))))
 
-    Kick and a hat can happen together. Kick and a tom at the same instant
-    are one hit. A ride or a high tom requires the brightness or the pitch
-    that name implies.
+
+def _metal_is_real(air: float, bright: float, air_min: float, bright_min: float) -> bool:
+    return air >= air_min or bright >= bright_min
+
+
+def clarify_kinds(kinds: list[str], segment: np.ndarray, sample_rate: int) -> list[str]:
+    """Keep each class the onset evidence supports.
+
+    ADTOF already thresholds every family on its own, so kick and hat can
+    arrive together and both stay. A cymbal stays beside a snare when the
+    high end is really there. The low drum is still one name: two toms are
+    the same hit, and a kick-shaped thud is not also a floor tom.
     """
     if segment.size < 16 or not kinds:
         return []
@@ -204,14 +230,26 @@ def clarify_kinds(kinds: list[str], segment: np.ndarray, sample_rate: int) -> li
     labels: list[str] = []
     named_hat = any(kind.startswith("hat_") for kind in kinds)
     named_cymbal = any(kind in {"ride", "crash"} for kind in kinds)
-    if air >= 0.025 and (named_hat or named_cymbal):
-        if named_cymbal and (not named_hat or air >= 0.06):
-            labels.append(split_family("cymbal", segment, sample_rate))
-        else:
-            labels.append(split_family("hat", segment, sample_rate))
+    # Ratio alone misses a hat buried under a loud kick. Absolute brightness
+    # catches that hat, and stays above the hiss of a dark kick.
+    if named_hat and _metal_is_real(air, _band_rms(segment, sample_rate, 6000.0), 0.02, 0.012):
+        labels.append(split_family("hat", segment, sample_rate))
+    # A dark kick can leak a little energy above 5 kHz. Real crashes in the
+    # simultaneous-hit check sit higher than that leak on both measures.
+    if named_cymbal and _metal_is_real(air, _band_rms(segment, sample_rate, 5000.0), 0.05, 0.07):
+        labels.append(split_family("cymbal", segment, sample_rate))
     low = _choose_low(kinds, segment, sample_rate, noise, fundamental)
-    if low and (not labels or low == "kick"):
+    if low:
         labels.append(low)
+    # A snare on top of a kick is two drums. _choose_low keeps the snare;
+    # the kick stays when the model named it and the body is still low.
+    if (
+        low == "snare"
+        and "kick" in kinds
+        and noise >= 0.18
+        and (fundamental <= 0 or fundamental < 105)
+    ):
+        labels.insert(0, "kick")
     if not labels:
         fallback = low or _choose_low(["kick"], segment, sample_rate, noise, fundamental) or "kick"
         labels.append(fallback)
