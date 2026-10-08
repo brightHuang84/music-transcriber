@@ -11,6 +11,7 @@ import numpy as np
 
 from app.errors import UserFacingError
 from app.notes import describe_pitch
+from app.stems import label_for
 
 # Per-stem ranges keep bass out of the melody octave and vocals out of sub-bass rumble.
 _STEM_SETTINGS = {
@@ -25,6 +26,18 @@ _STEM_SETTINGS = {
         "maximum_frequency": 450.0,
         "melodia_trick": True,
         "minimum_note_length": 80.0,
+    },
+    "guitar": {
+        "minimum_frequency": 70.0,
+        "maximum_frequency": 1400.0,
+        "melodia_trick": False,
+        "minimum_note_length": 70.0,
+    },
+    "piano": {
+        "minimum_frequency": 27.0,
+        "maximum_frequency": 4200.0,
+        "melodia_trick": False,
+        "minimum_note_length": 60.0,
     },
     "other": {
         "minimum_frequency": 50.0,
@@ -149,7 +162,7 @@ def transcribe(audio_path: Path, stem: str, midi_tempo: float = 120.0) -> list[d
     except UserFacingError:
         raise
     except Exception as exc:
-        raise UserFacingError(f"识别「{stem}」音高时出了问题。可以换一首更短、更清晰的歌再试。") from exc
+        raise UserFacingError(f"识别{label_for(stem)}的音高时出了问题。可以换一首更短、更清晰的歌再试。") from exc
 
     notes: list[dict] = []
     for start, end, pitch, amplitude, _bends in note_events:

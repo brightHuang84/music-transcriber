@@ -141,6 +141,136 @@ def synthesize_example(path: Path | None = None) -> dict:
     }
 
 
+def _piano_tone(frequency: float, seconds: float) -> np.ndarray:
+    """Fast attack. Higher partials die first, and the fundamental stays clear."""
+    count = int(seconds * SAMPLE_RATE)
+    if count <= 0:
+        return np.zeros(0, dtype=np.float32)
+    time = np.arange(count, dtype=np.float32) / SAMPLE_RATE
+    wave = np.zeros(count, dtype=np.float32)
+    for partial in range(1, 7):
+        envelope = np.exp(-time / (0.9 / partial))
+        wave += np.float32(0.55 / partial) * np.sin(2 * np.pi * frequency * partial * time) * envelope
+    # The fundamental is louder and rings longer than the hammer partials.
+    wave += np.sin(2 * np.pi * frequency * time) * np.exp(-time / 1.1)
+    peak = np.max(np.abs(wave)) + 1e-8
+    return (wave / peak).astype(np.float32)
+
+
+def _bowed_tone(frequency: float, seconds: float) -> np.ndarray:
+    """Slow attack, light vibrato, and a sustained body, like a violin."""
+    count = int(seconds * SAMPLE_RATE)
+    if count <= 0:
+        return np.zeros(0, dtype=np.float32)
+    time = np.arange(count, dtype=np.float32) / SAMPLE_RATE
+    vibrato = np.sin(2 * np.pi * 5.1 * time)
+    instantaneous = frequency * (1.0 + 0.007 * vibrato)
+    phase = np.cumsum(instantaneous) / SAMPLE_RATE
+    wave = np.zeros(count, dtype=np.float32)
+    for partial, weight in enumerate((1.0, 0.62, 0.34, 0.16, 0.08), start=1):
+        wave += np.float32(weight) * np.sin(2 * np.pi * partial * phase)
+    attack = np.minimum(1.0, time / 0.09)
+    release = np.ones(count, dtype=np.float32)
+    release_samples = min(count, int(0.12 * SAMPLE_RATE))
+    if release_samples:
+        release[-release_samples:] = np.linspace(1.0, 0.0, release_samples, dtype=np.float32)
+    wave *= attack * release
+    peak = np.max(np.abs(wave)) + 1e-8
+    return (wave / peak).astype(np.float32)
+
+
+def _pluck_tone(frequency: float, seconds: float) -> np.ndarray:
+    """A short plucked note, like a guitar."""
+    body = _tone(frequency, seconds, harmonics=(1.0, 0.5, 0.28, 0.12, 0.05))
+    click = _shaped_noise(min(0.012, seconds), 500, 4000, 0.004) * 0.35
+    if click.size:
+        body = body.copy()
+        body[: click.size] += click
+    peak = np.max(np.abs(body)) + 1e-8
+    return (body / peak).astype(np.float32)
+
+
+def synthesize_ensemble(path: Path | None = None) -> dict:
+    """A short clip of piano, violin, and guitar on known pitches.
+
+    The ranges do not overlap: piano stays at or below C4, guitar sits in the
+    middle, violin stays at or above D5. That makes a later stem check able to
+    say which instrument a transcribed note belonged to.
+    """
+    # A short rest keeps the first chord off the very first sample. Basic Pitch
+    # often drops a note that starts at time zero.
+    offset = 0.25
+    duration = 8.5
+    frames = int(duration * SAMPLE_RATE)
+    piano = np.zeros(frames, dtype=np.float32)
+    violin = np.zeros(frames, dtype=np.float32)
+    guitar = np.zeros(frames, dtype=np.float32)
+
+    # One note at a time. A block chord's inner voices are easy for Basic Pitch
+    # to swallow, which would make the later stem check look worse than the
+    # separation really is.
+    piano_notes = [
+        (offset + 0.00, offset + 0.70, 48),  # C3
+        (offset + 0.85, offset + 1.55, 52),  # E3
+        (offset + 1.70, offset + 2.40, 55),  # G3
+        (offset + 2.55, offset + 3.25, 60),  # C4
+        (offset + 3.40, offset + 4.10, 57),  # A3
+        (offset + 4.25, offset + 4.95, 53),  # F3
+        (offset + 5.10, offset + 5.80, 51),  # D#3
+        (offset + 5.95, offset + 6.65, 54),  # F#3
+        (offset + 6.80, offset + 7.50, 55),  # G3
+        (offset + 7.65, offset + 8.15, 52),  # E3
+    ]
+    violin_notes = [
+        (offset + 0.25, offset + 1.85, 76),  # E5
+        (offset + 2.25, offset + 3.85, 79),  # G5
+        (offset + 4.25, offset + 5.85, 83),  # B5
+        (offset + 6.25, offset + 7.7, 74),  # D5
+    ]
+    guitar_notes = []
+    guitar_pattern = (64, 67, 71, 67)  # E4 G4 B4 G4
+    for bar in range(4):
+        for step, midi in enumerate(guitar_pattern):
+            start = offset + bar * 2.0 + step * 0.5
+            guitar_notes.append((round(start, 4), round(start + 0.42, 4), midi))
+
+    for start, end, midi in piano_notes:
+        frequency = 440.0 * 2 ** ((midi - 69) / 12)
+        _add(piano, start, _piano_tone(frequency, end - start) * 0.42)
+    for start, end, midi in violin_notes:
+        frequency = 440.0 * 2 ** ((midi - 69) / 12)
+        _add(violin, start, _bowed_tone(frequency, end - start) * 0.38)
+    for start, end, midi in guitar_notes:
+        frequency = 440.0 * 2 ** ((midi - 69) / 12)
+        _add(guitar, start, _pluck_tone(frequency, end - start) * 0.34)
+
+    mix = (piano + violin + guitar).astype(np.float32)
+    peak = float(np.max(np.abs(mix)) + 1e-8)
+    scale = np.float32(0.9 / peak)
+    piano = piano * scale
+    violin = violin * scale
+    guitar = guitar * scale
+    mix = (piano + violin + guitar).astype(np.float32)
+
+    def stereo(mono: np.ndarray) -> np.ndarray:
+        return np.stack([mono, mono], axis=0)
+
+    if path is not None:
+        save_wav(path, stereo(mix), SAMPLE_RATE)
+    return {
+        "sample_rate": SAMPLE_RATE,
+        "bpm": BPM,
+        "duration": duration,
+        "piano": piano_notes,
+        "violin": violin_notes,
+        "guitar": guitar_notes,
+        "audio": stereo(mix),
+        "piano_audio": stereo(piano),
+        "violin_audio": stereo(violin),
+        "guitar_audio": stereo(guitar),
+    }
+
+
 def _chord_audio() -> np.ndarray:
     """Two seconds of a C major triad, used by the chord test."""
     frames = int(2.0 * SAMPLE_RATE)

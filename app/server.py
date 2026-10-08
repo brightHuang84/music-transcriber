@@ -11,13 +11,14 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.audio_io import ALLOWED_EXTENSIONS
 from app.errors import UserFacingError
 from app.pipeline import analyze
+from app.stems import DEFAULT_MODE, mode_spec
 from app.synth import synthesize_example
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,7 @@ def _update(job: dict, **fields) -> None:
             logger.exception("Could not write job status")
 
 
-def _run_job(job: dict, source: Path) -> None:
+def _run_job(job: dict, source: Path, mode: str) -> None:
     work = jobs_dir() / job["id"]
 
     def progress(percent: int, step: str, message: str) -> None:
@@ -95,7 +96,7 @@ def _run_job(job: dict, source: Path) -> None:
 
     try:
         _update(job, status="running", progress=1, step="read", message="开始分析…")
-        result = analyze(source, work, progress)
+        result = analyze(source, work, progress, mode=mode)
         result_path = work / "result.json"
         result_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
         _update(job, status="done", progress=100, step="done", message="分析完成", result=result)
@@ -181,8 +182,14 @@ def create_app() -> FastAPI:
     def health() -> dict:
         return {"ok": True}
 
+    def _checked_mode(mode: str) -> str:
+        try:
+            return str(mode_spec(mode)["id"])
+        except UserFacingError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/api/analyze")
-    async def start_analyze(file: UploadFile = File(...)) -> JSONResponse:
+    async def start_analyze(file: UploadFile = File(...), mode: str = Form(DEFAULT_MODE)) -> JSONResponse:
         original = Path(file.filename or "audio").name
         extension = Path(original).suffix.lower()
         if extension not in ALLOWED_EXTENSIONS:
@@ -195,18 +202,20 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="文件是空的。请换一个音频文件。")
         if len(payload) > MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=400, detail="文件超过 120MB 了。请先把歌曲剪短，或换成 mp3。")
+        chosen = _checked_mode(mode)
         job = _new_job(original)
         source = jobs_dir() / job["id"] / f"source{extension}"
         source.write_bytes(payload)
-        _executor.submit(_run_job, job, source)
+        _executor.submit(_run_job, job, source, chosen)
         return JSONResponse(_public_view(job))
 
     @app.post("/api/demo")
-    def start_demo() -> JSONResponse:
+    def start_demo(mode: str = DEFAULT_MODE) -> JSONResponse:
+        chosen = _checked_mode(mode)
         job = _new_job("示例音乐.wav")
         source = jobs_dir() / job["id"] / "source.wav"
         synthesize_example(source)
-        _executor.submit(_run_job, job, source)
+        _executor.submit(_run_job, job, source, chosen)
         return JSONResponse(_public_view(job))
 
     @app.get("/api/jobs/{job_id}")
@@ -220,21 +229,28 @@ def create_app() -> FastAPI:
             return json.loads(status_path.read_text(encoding="utf-8"))
         return _public_view(job)
 
+    def _safe_stem(stem: str) -> str:
+        if not stem or any(char not in "abcdefghijklmnopqrstuvwxyz_" for char in stem):
+            raise HTTPException(status_code=404, detail="没有这条音轨。")
+        return stem
+
     @app.get("/api/jobs/{job_id}/audio/{stem}")
     def stem_audio(job_id: str, stem: str) -> FileResponse:
-        if stem not in {"mix", "vocals", "drums", "bass", "other"}:
-            raise HTTPException(status_code=404, detail="没有这条音轨。")
         folder = _job_dir(job_id)
-        path = folder / ("mix.wav" if stem == "mix" else f"stems/{stem}.wav")
+        if stem == "mix":
+            path = folder / "mix.wav"
+            filename = "mix.wav"
+        else:
+            _safe_stem(stem)
+            path = folder / "stems" / f"{stem}.wav"
+            filename = f"{stem}.wav"
         if not path.exists():
             raise HTTPException(status_code=404, detail="音轨还没准备好。")
-        filename = "mix.wav" if stem == "mix" else f"{stem}.wav"
         return FileResponse(path, media_type="audio/wav", filename=filename)
 
     @app.get("/api/jobs/{job_id}/midi/{stem}")
     def stem_midi(job_id: str, stem: str) -> FileResponse:
-        if stem not in {"vocals", "drums", "bass", "other", "all"}:
-            raise HTTPException(status_code=404, detail="没有这个 MIDI。")
+        _safe_stem(stem)
         path = _job_dir(job_id) / "midi" / f"{stem}.mid"
         if not path.exists():
             raise HTTPException(status_code=404, detail="MIDI 还没准备好。")
@@ -244,19 +260,15 @@ def create_app() -> FastAPI:
     def bundle(job_id: str) -> FileResponse:
         folder = _job_dir(job_id)
         archive = folder / "music-analysis.zip"
+        paths = [folder / "mix.wav"]
+        stems = folder / "stems"
+        midi = folder / "midi"
+        if stems.is_dir():
+            paths.extend(sorted(stems.glob("*.wav")))
+        if midi.is_dir():
+            paths.extend(sorted(midi.glob("*.mid")))
         with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as handle:
-            for path in (
-                folder / "mix.wav",
-                folder / "stems" / "vocals.wav",
-                folder / "stems" / "drums.wav",
-                folder / "stems" / "bass.wav",
-                folder / "stems" / "other.wav",
-                folder / "midi" / "vocals.mid",
-                folder / "midi" / "drums.mid",
-                folder / "midi" / "bass.mid",
-                folder / "midi" / "other.mid",
-                folder / "midi" / "all.mid",
-            ):
+            for path in paths:
                 if path.exists():
                     handle.write(path, arcname=path.name)
         if not archive.exists():

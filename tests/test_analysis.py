@@ -6,7 +6,10 @@ from pathlib import Path
 
 import numpy as np
 import pretty_midi
+import pytest
 from fastapi.testclient import TestClient
+
+from app.errors import UserFacingError
 
 from app.audio_io import convert_to_wav, load_audio, save_wav
 from app.chords import detect_chords
@@ -296,6 +299,59 @@ def test_melody_transcription_finds_the_written_pitches(tmp_path: Path):
         assert matched[0]["duration"] > 0
 
 
+def test_download_bar_reports_bytes():
+    from app.separation import _download_bar
+
+    seen: list[tuple[float, str]] = []
+    bar_type = _download_bar(lambda fraction, message: seen.append((fraction, message)), "精细", 55)
+    bar = bar_type(total=20_000_000, desc="weights", unit="B", unit_scale=True)
+    bar.update(5_000_000)
+    bar.close()
+    assert seen[-1][0] == pytest.approx(0.25)
+    assert "5/20 MB" in seen[-1][1]
+    assert "精细" in seen[-1][1]
+
+
+def test_instrument_programs_match_general_midi():
+    from app.stems import MODES, STEMS, mode_spec
+
+    assert STEMS["piano"]["program"] == 0
+    assert STEMS["guitar"]["program"] == 25
+    assert STEMS["vocals"]["program"] == 53
+    assert STEMS["bass"]["program"] == 33
+    assert STEMS["other"]["program"] == 48
+    assert "violin" not in STEMS
+    assert MODES["fine"]["model"] == "htdemucs_6s"
+    assert "piano" in MODES["fine"]["stems"]
+    assert "guitar" in MODES["fine"]["stems"]
+    assert "piano" not in MODES["fast"]["stems"]
+    assert mode_spec("fine")["id"] == "fine"
+    with pytest.raises(UserFacingError):
+        mode_spec("studio")
+
+
+def test_isolated_piano_and_violin_notes_transcribe(tmp_path: Path):
+    from app.synth import synthesize_ensemble
+
+    clip = synthesize_ensemble()
+    piano_path = tmp_path / "piano.wav"
+    violin_path = tmp_path / "violin.wav"
+    save_wav(piano_path, clip["piano_audio"], clip["sample_rate"])
+    save_wav(violin_path, clip["violin_audio"], clip["sample_rate"])
+    piano_notes = transcribe(piano_path, "piano", midi_tempo=120)
+    violin_notes = transcribe(violin_path, "other", midi_tempo=120)
+    for start, _end, pitch in clip["piano"]:
+        assert any(note["pitch"] == pitch and abs(note["start"] - start) <= 0.2 for note in piano_notes), (
+            pitch,
+            piano_notes,
+        )
+    for start, _end, pitch in clip["violin"]:
+        assert any(note["pitch"] == pitch and abs(note["start"] - start) <= 0.25 for note in violin_notes), (
+            pitch,
+            violin_notes,
+        )
+
+
 def test_midi_files_round_trip(tmp_path: Path):
     notes = [
         {"pitch": 64, "start": 0.0, "end": 0.4, "velocity": 80, "name": "E4", "solfege": "mi", "duration": 0.4}
@@ -309,16 +365,28 @@ def test_midi_files_round_trip(tmp_path: Path):
         {"time": 1.5, "kind": "crash", "velocity": 110},
     ]
     write_stem_midi(tmp_path / "vocals.mid", "vocals", 120, notes=notes)
+    write_stem_midi(tmp_path / "piano.mid", "piano", 120, notes=notes)
+    write_stem_midi(tmp_path / "guitar.mid", "guitar", 120, notes=notes)
     write_stem_midi(tmp_path / "drums.mid", "drums", 120, hits=hits)
-    write_combined_midi(tmp_path / "all.mid", 120, {"vocals": notes, "bass": bass, "other": []}, hits)
+    write_combined_midi(
+        tmp_path / "all.mid",
+        120,
+        {"vocals": notes, "piano": notes, "guitar": notes, "bass": bass, "other": []},
+        hits,
+    )
     vocals = pretty_midi.PrettyMIDI(str(tmp_path / "vocals.mid"))
     assert vocals.instruments[0].notes[0].pitch == 64
+    assert vocals.instruments[0].program == 53
+    piano = pretty_midi.PrettyMIDI(str(tmp_path / "piano.mid"))
+    assert piano.instruments[0].program == 0
+    guitar = pretty_midi.PrettyMIDI(str(tmp_path / "guitar.mid"))
+    assert guitar.instruments[0].program == 25
     drums = pretty_midi.PrettyMIDI(str(tmp_path / "drums.mid"))
     assert drums.instruments[0].is_drum
     assert [note.pitch for note in drums.instruments[0].notes] == [38, 46, 49]
     combined = pretty_midi.PrettyMIDI(str(tmp_path / "all.mid"))
     names = {instrument.name for instrument in combined.instruments}
-    assert {"Vocals", "Bass", "Drums"} <= names
+    assert {"Vocals", "Piano", "Guitar", "Bass", "Drums"} <= names
 
 
 def test_ffmpeg_reads_mp3(tmp_path: Path):

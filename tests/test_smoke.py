@@ -21,12 +21,13 @@ def test_pipeline_on_synthesized_clip(tmp_path: Path):
     def progress(percent: int, step: str, message: str) -> None:
         updates.append((percent, step, message))
 
-    result = analyze(source, tmp_path / "work", progress)
+    result = analyze(source, tmp_path / "work", progress, mode="fast")
     json.dumps(result)
     assert updates[-1][0] == 100
     assert result["duration"] == pytest.approx(example["duration"], abs=0.1)
     assert result["bpm"] > 0
     assert result["beats"]
+    assert result["mode"] == "fast"
     assert set(result["stems"]) == {"vocals", "drums", "bass", "other"}
     for name in ("vocals", "drums", "bass", "other"):
         audio = tmp_path / "work" / "stems" / f"{name}.wav"
