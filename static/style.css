@@ -307,7 +307,9 @@ main { display: grid; gap: 16px; padding-bottom: 28px; }
   margin: 10px 0 4px;
 }
 
-.view-tools .group { display: flex; flex-wrap: wrap; gap: 8px; }
+.view-tools .group { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.view-tools .group-label { color: var(--muted); font-size: 14px; }
 
 .view-tools button {
   border: 1px solid var(--line);

@@ -12,11 +12,12 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.audio_io import ALLOWED_EXTENSIONS
 from app.errors import UserFacingError
+from app.notation import musicxml_document
 from app.pipeline import analyze
 from app.stems import DEFAULT_MODE, mode_spec
 from app.synth import synthesize_example
@@ -257,8 +258,22 @@ def create_app() -> FastAPI:
         return FileResponse(path, media_type="audio/midi", filename=f"{stem}.mid")
 
     @app.get("/api/jobs/{job_id}/musicxml/{name}")
-    def musicxml(job_id: str, name: str) -> FileResponse:
+    def musicxml(job_id: str, name: str, simplify: str = "standard") -> Response:
         _safe_stem(name)
+        result_path = _job_dir(job_id) / "result.json"
+        if result_path.exists():
+            try:
+                result = json.loads(result_path.read_text(encoding="utf-8"))
+                xml = musicxml_document(result, name, simplify)
+            except Exception:
+                logger.exception("五线谱重新生成失败：%s", name)
+                xml = None
+            if xml:
+                return Response(
+                    content=xml,
+                    media_type="application/vnd.recordare.musicxml+xml",
+                    headers={"Content-Disposition": f'inline; filename="{name}.musicxml"'},
+                )
         path = _job_dir(job_id) / "notation" / f"{name}.musicxml"
         if not path.exists():
             raise HTTPException(status_code=404, detail="这份结果是旧的，请重新分析一次，才能看五线谱。")

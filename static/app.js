@@ -50,6 +50,7 @@ let rollLayout = null;
 let noteRole = "both";
 let noteScope = "stem";
 let stageView = "roll";
+let staffSimplify = "standard";
 let osmd = null;
 let sheetTimes = [];
 let staffIndex = 0;
@@ -422,6 +423,16 @@ function noteColor(note) {
   return (STEMS[stem] && STEMS[stem].color) || "#2d6d9a";
 }
 
+function musicXmlHref(name) {
+  return `/api/jobs/${job.id}/musicxml/${name}?simplify=${encodeURIComponent(staffSimplify)}`;
+}
+
+function syncSimplifyButtons() {
+  document.querySelectorAll("[data-simplify]").forEach((button) => {
+    button.classList.toggle("on", button.dataset.simplify === staffSimplify);
+  });
+}
+
 function musicXmlName() {
   if (noteScope === "song") {
     if (noteRole === "melody") return "song_melody";
@@ -715,8 +726,8 @@ function renderDownloads() {
       ["整首旋律", `/api/jobs/${id}/midi/melody`, "melody.mid"],
       ["整首和声", `/api/jobs/${id}/midi/harmony`, "harmony.mid"],
       ["旋律和声加贝斯鼓", `/api/jobs/${id}/midi/lead`, "lead.mid"],
-      ["当前五线谱", `/api/jobs/${id}/musicxml/${sheet}`, `${sheet}.musicxml`],
-      ["整首五线谱", `/api/jobs/${id}/musicxml/song`, "song.musicxml"],
+      ["当前五线谱", musicXmlHref(sheet), `${sheet}.musicxml`],
+      ["整首五线谱", musicXmlHref("song"), "song.musicxml"],
     );
   }
   items.push(
@@ -806,7 +817,8 @@ function staffCaption() {
   else if (noteRole === "melody") what = "只看旋律";
   else if (noteRole === "harmony") what = "只看和声";
   const where = noteScope === "song" ? "整首歌" : STEMS[viewStem].label;
-  return `${where} · ${what} · ${key} · ${meter}。音长已经对齐到八分音符，方便初学跟着看。`;
+  const simplifyLabel = { detail: "详细", standard: "标准", simple: "简化" }[staffSimplify] || "标准";
+  return `${where} · ${what} · ${key} · ${meter} · ${simplifyLabel}。同时响的音叠成和弦，能连起来的音写成更长的音符。`;
 }
 
 function applyStage() {
@@ -901,7 +913,7 @@ async function loadStaff() {
   const name = musicXmlName();
   let response;
   try {
-    response = await fetch(`/api/jobs/${job.id}/musicxml/${name}`);
+    response = await fetch(musicXmlHref(name));
   } catch {
     if (token !== staffToken) return;
     if (status) status.textContent = "五线谱没有载入。请确认程序还开着。";
@@ -948,6 +960,7 @@ async function loadStaff() {
 }
 
 function refreshView() {
+  syncSimplifyButtons();
   syncRoleButtons();
   describeStem();
   renderNoteTable();
@@ -1127,6 +1140,15 @@ document.querySelectorAll("[data-view]").forEach((button) => {
     refreshView();
   });
 });
+document.querySelectorAll("[data-simplify]").forEach((button) => {
+  button.addEventListener("click", () => {
+    staffSimplify = button.dataset.simplify;
+    try { localStorage.setItem("tingyin-simplify", staffSimplify); } catch { /* private mode */ }
+    syncSimplifyButtons();
+    renderDownloads();
+    if (stageView === "staff") loadStaff();
+  });
+});
 document.querySelector("#print-staff").addEventListener("click", () => window.print());
 document.querySelector("#again").addEventListener("click", resetToDrop);
 document.querySelector("#error-back").addEventListener("click", resetToDrop);
@@ -1154,6 +1176,14 @@ window.addEventListener("resize", () => {
   }
   paint(currentTime());
 });
+
+try {
+  const savedSimplify = localStorage.getItem("tingyin-simplify");
+  if (savedSimplify === "detail" || savedSimplify === "standard" || savedSimplify === "simple") {
+    staffSimplify = savedSimplify;
+  }
+  syncSimplifyButtons();
+} catch { /* private mode */ }
 
 try {
   const savedMode = localStorage.getItem("tingyin-mode");

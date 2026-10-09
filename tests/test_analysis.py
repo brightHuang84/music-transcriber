@@ -784,3 +784,207 @@ def test_lead_sheet_melody_matches_the_written_line(tmp_path: Path):
     assert "32nd" not in xml and "64th" not in xml
     assert "<sign>G</sign>" in xml
     assert "<kind" in xml
+
+
+def _xml_root(xml: str):
+    import xml.etree.ElementTree as ET
+
+    return ET.fromstring(xml)
+
+
+def test_same_pitch_across_a_tiny_gap_becomes_one_note():
+    from app.notation import build_musicxml
+
+    xml = build_musicxml(
+        [{"name": "旋律", "clef": "treble", "program": 73, "monophonic": True, "notes": [
+            _note(0.0, 0.45, 60),
+            _note(0.50, 1.0, 60),
+        ]}],
+        bpm=120,
+        duration=2.0,
+    )
+    root = _xml_root(xml)
+    pitches = root.findall(".//pitch")
+    assert len(pitches) == 1
+    assert root.find(".//type").text == "half"
+    assert root.find(".//tied") is None
+
+
+def test_a_short_blip_is_dropped_at_the_standard_level():
+    from app.notation import build_musicxml
+
+    xml = build_musicxml(
+        [{"name": "旋律", "clef": "treble", "program": 73, "monophonic": True, "notes": [
+            _note(0.0, 0.5, 60),
+            _note(1.5, 1.53, 72),
+        ]}],
+        bpm=120,
+        duration=2.0,
+    )
+    root = _xml_root(xml)
+    octaves = [item.text for item in root.findall(".//pitch/octave")]
+    assert octaves == ["4"]
+    assert "16th" not in xml
+
+
+def test_three_beats_are_one_dotted_half():
+    from app.notation import build_musicxml
+
+    xml = build_musicxml(
+        [{"name": "旋律", "clef": "treble", "program": 73, "monophonic": True, "notes": [
+            _note(0.0, 1.5, 67),
+        ]}],
+        bpm=120,
+        duration=2.0,
+    )
+    root = _xml_root(xml)
+    assert [item.text for item in root.findall(".//pitch/step")] == ["G"]
+    assert root.find(".//type").text == "half"
+    assert root.find(".//dot") is not None
+    assert root.find(".//tied") is None
+
+
+def test_an_empty_measure_is_one_full_rest():
+    from app.notation import build_musicxml
+
+    xml = build_musicxml(
+        [{"name": "旋律", "clef": "treble", "program": 73, "monophonic": True, "notes": [
+            _note(0.0, 0.5, 60),
+        ]}],
+        bpm=120,
+        duration=4.0,
+    )
+    root = _xml_root(xml)
+    rests = root.findall(".//rest")
+    assert any(rest.get("measure") == "yes" for rest in rests)
+
+
+def test_near_simultaneous_notes_become_one_chord():
+    from app.notation import build_musicxml
+
+    xml = build_musicxml(
+        [{"name": "钢琴", "clef": "treble", "program": 0, "kind": "piano", "notes": [
+            _note(0.00, 0.50, 60, 80),
+            _note(0.03, 0.52, 64, 75),
+            _note(0.04, 0.48, 67, 90),
+        ]}],
+        bpm=120,
+        duration=2.0,
+    )
+    root = _xml_root(xml)
+    assert len(root.findall(".//chord")) == 2
+    assert {item.text for item in root.findall(".//voice")} == {"1"}
+    assert [item.text for item in root.findall(".//pitch/step")] == ["C", "E", "G"]
+    assert "16th" not in xml
+
+
+def test_harmony_reattacks_become_one_sustained_chord():
+    from app.notation import build_musicxml
+
+    notes = []
+    for index in range(4):
+        start = index * 0.5
+        for pitch in (60, 64, 67):
+            note = _note(start, start + 0.45, pitch, 70)
+            note["role"] = "harmony"
+            notes.append(note)
+    xml = build_musicxml(
+        [{"name": "和声", "clef": "treble", "program": 0, "kind": "harmony", "notes": notes}],
+        bpm=120,
+        chords=[{"start": 0.0, "end": 2.0, "symbol": "C"}],
+        duration=2.0,
+    )
+    root = _xml_root(xml)
+    assert len(root.findall(".//pitch")) == 3
+    assert len(root.findall(".//chord")) == 2
+    assert root.find(".//type").text == "whole"
+    assert {item.text for item in root.findall(".//voice")} == {"1"}
+
+
+def test_a_moving_melody_over_a_held_chord_uses_a_second_voice():
+    from app.notation import build_musicxml
+
+    notes = []
+    for pitch in (60, 64):
+        note = _note(0.0, 2.0, pitch, 60)
+        note["role"] = "harmony"
+        notes.append(note)
+    for index, pitch in enumerate((72, 74, 76, 77)):
+        note = _note(index * 0.5, index * 0.5 + 0.45, pitch, 100)
+        note["role"] = "melody"
+        notes.append(note)
+    xml = build_musicxml(
+        [{"name": "钢琴", "clef": "treble", "program": 0, "kind": "piano", "notes": notes}],
+        bpm=120,
+        chords=[{"start": 0.0, "end": 2.0, "symbol": "C"}],
+        duration=2.0,
+    )
+    root = _xml_root(xml)
+    voices = {item.text for item in root.findall(".//voice")}
+    assert voices == {"1", "2"}
+    assert len(root.findall(".//chord")) == 1
+
+
+def test_simple_writes_fewer_notes_than_detail():
+    from app.notation import build_musicxml
+
+    notes = [_note(index * 0.125, index * 0.125 + 0.12, 60 + (index % 5), 80) for index in range(16)]
+    detail = build_musicxml(
+        [{"name": "旋律", "clef": "treble", "program": 73, "monophonic": True, "notes": notes}],
+        bpm=120,
+        duration=2.0,
+        simplify="detail",
+    )
+    simple = build_musicxml(
+        [{"name": "旋律", "clef": "treble", "program": 73, "monophonic": True, "notes": notes}],
+        bpm=120,
+        duration=2.0,
+        simplify="simple",
+    )
+    assert len(_xml_root(simple).findall(".//pitch")) < len(_xml_root(detail).findall(".//pitch"))
+
+
+def test_a_clear_triplet_is_marked():
+    from app.notation import build_musicxml
+
+    notes = [
+        _note(0.00, 0.15, 60),
+        _note(0.167, 0.31, 62),
+        _note(0.333, 0.48, 64),
+    ]
+    xml = build_musicxml(
+        [{"name": "旋律", "clef": "treble", "program": 73, "monophonic": True, "notes": notes}],
+        bpm=120,
+        duration=2.0,
+        simplify="detail",
+    )
+    root = _xml_root(xml)
+    assert [item.text for item in root.findall(".//actual-notes")] == ["3", "3", "3"]
+    assert "16th" not in xml
+
+
+def test_musicxml_route_rebuilds_from_the_analysis(monkeypatch, tmp_path: Path):
+    import json
+
+    monkeypatch.setenv("MUSIC_ANALYZER_DATA", str(tmp_path))
+    client = TestClient(app)
+    folder = tmp_path / "jobs" / "abc123"
+    folder.mkdir(parents=True)
+    (folder / "result.json").write_text(json.dumps({
+        "bpm": 120,
+        "time_signature": "4/4",
+        "duration": 2.0,
+        "key": {"tonic": "C", "mode": "major", "name": "C 大调"},
+        "chords": [{"start": 0.0, "end": 2.0, "symbol": "C"}],
+        "melody": [],
+        "harmony": [
+            {**_note(0.0, 0.5, 60), "role": "harmony"},
+            {**_note(0.02, 0.5, 64), "role": "harmony"},
+            {**_note(0.04, 0.48, 67), "role": "harmony"},
+        ],
+        "stems": {},
+    }), encoding="utf-8")
+    found = client.get("/api/jobs/abc123/musicxml/song_harmony?simplify=standard")
+    assert found.status_code == 200
+    assert b"<chord" in found.content
+    assert found.content.count(b"<chord") == 2

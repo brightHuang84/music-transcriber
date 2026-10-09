@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>听音识谱</title>
-  <link rel="stylesheet" href="/style.css?v=7" />
+  <link rel="stylesheet" href="/style.css?v=8" />
 </head>
 <body>
   <header class="top">
@@ -148,6 +148,12 @@
           <button type="button" data-scope="stem" class="on">当前乐器</button>
           <button type="button" data-scope="song">整首歌</button>
         </div>
+        <div class="group" role="group" aria-label="简化程度">
+          <span class="group-label">简化程度</span>
+          <button type="button" data-simplify="detail">详细</button>
+          <button type="button" data-simplify="standard" class="on">标准</button>
+          <button type="button" data-simplify="simple">简化</button>
+        </div>
         <div class="group" role="group" aria-label="怎么看">
           <button type="button" data-view="roll" class="on">钢琴卷帘</button>
           <button type="button" data-view="staff">五线谱</button>
@@ -215,7 +221,7 @@
           <li>最高质量把钢琴、吉他、鼓、贝斯和弦乐分得更干净，鼓谱按拆开的鼓来记。精细更快，但钢琴和吉他容易串音，小提琴仍在「其他乐器」里。快速不单独分钢琴和吉他。变灰的按钮是这首歌里几乎没有声音的轨。管乐、铜管和合成器仍在「其他乐器」里。</li>
           <li>砖红色的音是旋律。其他颜色是和声：和弦、铺底、分解和弦。贝斯单独算低音，不放进旋律，也不放进和声。</li>
           <li>「只看旋律」「只看和声」可以分开看。「当前乐器」是这一轨自己的旋律；「整首歌」是整首最突出的那条线。人声又轻又少时，不会把漏进来的人声当成主旋律。</li>
-          <li>「五线谱」按检测到的调号、拍号和速度对齐到八分音符，方便初学，不会写成一堆很碎的短音。和弦名写在谱表上方。钢琴用高低音双谱表。鼓谱仍按十六分音符。</li>
+          <li>「五线谱」按检测到的调号和拍号来写。「简化程度」可选详细、标准、简化，默认是标准：同时响的音叠成一个和弦，能连上的音写成更长的音符。想看更细的节奏就选详细。和弦名写在谱表上方。钢琴用高低音双谱表。鼓谱仍按十六分音符。</li>
           <li>和弦和调性是估计的，只标大和弦、小和弦，复杂的歌会不准。识谱也会有错音，把它当成学习的起点就好。</li>
         </ul>
       </section>
@@ -226,6 +232,6 @@
     <p>歌曲只在这台电脑上处理，不会上传到网上。</p>
   </footer>
   <script src="/vendor/opensheetmusicdisplay.min.js"></script>
-  <script src="/app.js?v=7"></script>
+  <script src="/app.js?v=8"></script>
 </body>
 </html>
